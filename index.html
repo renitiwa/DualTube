@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="ja" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DualTube Studio - YouTube 2窓マルチビューアー</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts: Inter & Noto Sans JP -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans JP', 'sans-serif'],
+                    },
+                    colors: {
+                        yt: {
+                            red: '#FF0033',
+                            dark: '#0f0f0f',
+                            panel: '#18181b',
+                            border: '#27272a',
+                            hover: '#27272a'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #09090b;
+            color: #f4f4f5;
+            overflow-x: hidden;
+        }
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #18181b;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3f3f46;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #52525b;
+        }
+        /* iframeのスムーズなリサイズ用 */
+        .iframe-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: #000;
+        }
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: 0;
+        }
+        /* レンジスライダーのカスタマイズ */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            cursor: pointer;
+            background: #27272a;
+            border-radius: 999px;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ef4444;
+            cursor: pointer;
+            -webkit-appearance: none;
+            margin-top: -5px;
+            box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+            transition: transform 0.15s ease;
+        }
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col select-none font-sans">
+
+    <!-- トースト通知エリア -->
+    <div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+    <!-- ヘルプ＆ドメイン設定モーダル -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-zinc-900 border border-zinc-700 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5">
+            <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
+                <h3 class="text-lg font-bold flex items-center gap-2 text-white">
+                    <i class="fa-solid fa-circle-info text-red-500"></i>
+                    ライブチャット表示設定・ヘルプ
+                </h3>
+                <button onclick="toggleModal('settingsModal', false)" class="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="space-y-4 text-sm text-zinc-300 leading-relaxed">
+                <div class="bg-zinc-950/80 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+                    <div class="font-semibold text-amber-400 flex items-center gap-1.5">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        チャットが表示されない・「接続が拒否されました」と出る場合
+                    </div>
+                    <p class="text-xs text-zinc-400">
+                        YouTubeの仕様上、ライブチャットの埋め込みには配信が<strong>「現在ライブ配信中」</strong>であることに加え、正しい<strong>埋め込み元ドメイン（embed_domain）</strong>の指定が必要です。ローカルファイルや一部のプレビュー環境でブロックされる場合は、各チャット欄右上の<span class="text-white font-medium">「ポップアウト（別窓）」ボタン <i class="fa-solid fa-up-right-from-square text-xs"></i></span> を使うと確実に表示・コメント投稿が可能です。
+                    </p>
+                </div>
+
+                <!-- 埋め込みドメイン設定 -->
+                <div class="space-y-1.5">
+                    <label class="block text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                        チャット埋め込み用ドメイン (embed_domain)
+                    </label>
+                    <div class="flex gap-2">
+                        <input type="text" id="embedDomainInput" placeholder="例: localhost または公開先ドメイン"
+                            class="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-red-500">
+                        <button onclick="applyCustomDomain()" class="bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-xs font-semibold transition">
+                            適用して再読込
+                        </button>
+                    </div>
+                    <p class="text-[11px] text-zinc-500">
+                        現在の自動検出ドメイン: <code id="detectedDomainText" class="text-zinc-300 bg-zinc-800 px-1.5 py-0.5 rounded"></code>
+                    </p>
+                </div>
+
+                <!-- 対応URL形式 -->
+                <div class="space-y-1.5">
+                    <div class="text-xs font-semibold text-zinc-400 uppercase tracking-wider">対応しているURL形式</div>
+                    <ul class="text-xs text-zinc-400 space-y-1 list-disc list-inside bg-zinc-950/60 p-3 rounded-xl border border-zinc-800/80">
+                        <li>通常URL: <code class="text-zinc-300">https://www.youtube.com/watch?v=XXXXXXXXXXX</code></li>
+                        <li>短縮URL: <code class="text-zinc-300">https://youtu.be/XXXXXXXXXXX</code></li>
+                        <li>配信URL: <code class="text-zinc-300">https://www.youtube.com/live/XXXXXXXXXXX</code></li>
+                        <li>動画ID直接入力: <code class="text-zinc-300">XXXXXXXXXXX</code> (11文字のID)</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="flex justify-end pt-2 border-t border-zinc-800">
+                <button onclick="toggleModal('settingsModal', false)" class="bg-zinc-800 hover:bg-zinc-700 text-white px-5 py-2 rounded-xl text-sm font-medium transition">
+                    閉じる
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- トップヘッダー＆コントロールバー -->
+    <header id="topBar" class="bg-zinc-900/95 border-b border-zinc-800 px-3 py-2.5 transition-all duration-200 z-30">
+        <div class="max-w-[1920px] mx-auto flex flex-col gap-2.5">
+            
+            <!-- 上段: ロゴ ＆ URL入力フォーム2つ ＆ アクションボタン -->
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <!-- ロゴ -->
+                <div class="flex items-center gap-2.5 mr-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-red-600 to-rose-700 flex items-center justify-center shadow-lg shadow-red-900/30">
+                        <i class="fa-solid fa-table-columns text-white text-sm"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-bold text-sm md:text-base tracking-tight text-white flex items-center gap-1.5">
+                            DualTube <span class="text-[10px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded-md">2窓 STUDIO</span>
+                        </h1>
+                    </div>
+                </div>
+
+                <!-- URL入力エリア (Stream 1 & Stream 2) -->
+                <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2 min-w-[280px] max-w-4xl">
+                    <!-- Stream 1 入力 -->
+                    <div class="flex items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-red-500 rounded-xl overflow-hidden transition shadow-inner">
+                        <span class="px-2.5 py-1.5 bg-red-600/20 text-red-400 font-bold text-xs border-r border-zinc-800 flex items-center gap-1 shrink-0">
+                            <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>1窓
+                        </span>
+                        <input id="urlInput1" type="text" placeholder="1つ目のYouTube URL または 動画IDを入力..."
+                            class="w-full bg-transparent px-3 py-1.5 text-xs md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                            onkeydown="if(event.key==='Enter') loadStream(1)">
+                        <button onclick="pasteToInput(1)" title="クリップボードから貼り付け" class="px-2 text-zinc-400 hover:text-white transition">
+                            <i class="fa-regular fa-paste text-xs"></i>
+                        </button>
+                        <button onclick="clearStream(1)" title="クリア" class="px-2 text-zinc-500 hover:text-zinc-300 transition">
+                            <i class="fa-solid fa-xmark text-xs"></i>
+                        </button>
+                        <button onclick="loadStream(1)" class="bg-zinc-800 hover:bg-red-600 text-zinc-200 hover:text-white px-3 py-1.5 text-xs font-semibold transition shrink-0">
+                            反映
+                        </button>
+                    </div>
+
+                    <!-- Stream 2 入力 -->
+                    <div class="flex items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-sky-500 rounded-xl overflow-hidden transition shadow-inner">
+                        <span class="px-2.5 py-1.5 bg-sky-600/20 text-sky-400 font-bold text-xs border-r border-zinc-800 flex items-center gap-1 shrink-0">
+                            <span class="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>2窓
+                        </span>
+                        <input id="urlInput2" type="text" placeholder="2つ目のYouTube URL または 動画IDを入力..."
+                            class="w-full bg-transparent px-3 py-1.5 text-xs md:text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none"
+                            onkeydown="if(event.key==='Enter') loadStream(2)">
+                        <button onclick="pasteToInput(2)" title="クリップボードから貼り付け" class="px-2 text-zinc-400 hover:text-white transition">
+                            <i class="fa-regular fa-paste text-xs"></i>
+                        </button>
+                        <button onclick="clearStream(2)" title="クリア" class="px-2 text-zinc-500 hover:text-zinc-300 transition">
+                            <i class="fa-solid fa-xmark text-xs"></i>
+                        </button>
+                        <button onclick="loadStream(2)" class="bg-zinc-800 hover:bg-sky-600 text-zinc-200 hover:text-white px-3 py-1.5 text-xs font-semibold transition shrink-0">
+                            反映
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 右側クイック操作 -->
+                <div class="flex items-center gap-1.5">
+                    <button onclick="loadBothStreams()" class="bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-md shadow-red-950/50 flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-play"></i>
+                        <span>両方読込</span>
+                    </button>
+                    <button onclick="loadDemoStreams()" title="サンプル24時間ライブ配信を読み込む" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2.5 py-1.5 rounded-xl text-xs font-medium border border-zinc-700/80 transition flex items-center gap-1">
+                        <i class="fa-solid fa-wand-magic-sparkles text-amber-400"></i>
+                        <span class="hidden sm:inline">サンプル</span>
+                    </button>
+                    <button onclick="toggleModal('settingsModal', true)" title="チャット設定・ヘルプ" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 w-8 h-8 rounded-xl flex items-center justify-center border border-zinc-700/80 transition">
+                        <i class="fa-solid fa-gear text-xs"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 下段: レイアウト切替 ＆ チャット表示制御 ＆ 比率スライダー -->
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-zinc-800/80 text-xs">
+                
+                <!-- レイアウト選択ボタングループ -->
+                <div class="flex items-center gap-1 flex-wrap">
+                    <span class="text-zinc-400 font-medium mr-1 hidden sm:inline"><i class="fa-solid fa-layer-group mr-1"></i>配置:</span>
+                    
+                    <button onclick="setLayout('split-columns')" id="btn-layout-split-columns"
+                        class="layout-btn px-2.5 py-1 rounded-lg bg-red-600 text-white font-medium flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-table-columns"></i>
+                        <span>左右独立 (動画+チャット)</span>
+                    </button>
+
+                    <button onclick="setLayout('video-top-chat-bottom')" id="btn-layout-video-top-chat-bottom"
+                        class="layout-btn px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-grip-lines"></i>
+                        <span>上:映像2つ / 下:チャット2つ</span>
+                    </button>
+
+                    <button onclick="setLayout('side-chat-dock')" id="btn-layout-side-chat-dock"
+                        class="layout-btn px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-table-list"></i>
+                        <span>左:映像2つ / 右:チャット並列</span>
+                    </button>
+
+                    <button onclick="setLayout('videos-only')" id="btn-layout-videos-only"
+                        class="layout-btn px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium flex items-center gap-1.5 transition">
+                        <i class="fa-solid fa-tv"></i>
+                        <span>映像のみ最大化</span>
+                    </button>
+                </div>
+
+                <!-- 中央〜右: 画面入れ替え・比率調整・個別チャット切替 -->
+                <div class="flex items-center gap-2 flex-wrap">
+                    <!-- 左右(1窓/2窓)入れ替え -->
+                    <button onclick="swapStreams()" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/70 flex items-center gap-1.5 transition" title="1窓と2窓を入れ替える">
+                        <i class="fa-solid fa-right-left text-amber-400"></i>
+                        <span>1⇔2入替</span>
+                    </button>
+
+                    <!-- チャット1 / チャット2 個別ON/OFF -->
+                    <div class="flex items-center bg-zinc-950 p-0.5 rounded-lg border border-zinc-800">
+                        <button onclick="toggleChat(1)" id="btnToggleChat1" class="px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-500/30 font-medium flex items-center gap-1 transition">
+                            <i class="fa-regular fa-comment-dots"></i> チャット1
+                        </button>
+                        <button onclick="toggleChat(2)" id="btnToggleChat2" class="px-2 py-0.5 rounded-md bg-sky-600/20 text-sky-400 border border-sky-500/30 font-medium flex items-center gap-1 ml-1 transition">
+                            <i class="fa-regular fa-comment-dots"></i> チャット2
+                        </button>
+                    </div>
+
+                    <!-- 1窓:2窓 サイズ比率スライダー -->
+                    <div class="hidden lg:flex items-center gap-2 bg-zinc-950 px-2.5 py-1 rounded-lg border border-zinc-800">
+                        <span class="text-zinc-400 text-[11px]">比率</span>
+                        <input type="range" id="ratioSlider" min="25" max="75" value="50" oninput="updateSplitRatio(this.value)" class="w-20">
+                        <button onclick="updateSplitRatio(50)" id="ratioLabel" class="text-[11px] font-mono text-zinc-300 hover:text-white" title="クリックで50:50にリセット">50:50</button>
+                    </div>
+
+                    <!-- 共有URLコピー -->
+                    <button onclick="copyShareUrl()" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700/70 flex items-center gap-1 transition" title="現在の2窓構成をURLとしてコピー">
+                        <i class="fa-solid fa-share-nodes text-emerald-400"></i>
+                        <span class="hidden sm:inline">共有URL</span>
+                    </button>
+
+                    <!-- ヘッダー折りたたみボタン -->
+                    <button onclick="toggleHeaderCollapse(true)" class="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition" title="上部バーを隠して画面を広くする">
+                        <i class="fa-solid fa-chevron-up"></i>
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    </header>
+
+    <!-- ヘッダー折りたたみ時のフローティング展開ボタン -->
+    <button id="expandHeaderBtn" onclick="toggleHeaderCollapse(false)"
+        class="fixed top-2 right-3 z-40 hidden bg-zinc-900/90 hover:bg-red-600 text-zinc-200 hover:text-white border border-zinc-700 px-3 py-1.5 rounded-full text-xs font-semibold shadow-xl backdrop-blur-md items-center gap-1.5 transition">
+        <i class="fa-solid fa-chevron-down"></i>
+        <span>メニュー表示</span>
+    </button>
+
+    <!-- メインビューポート (レイアウトに応じて動的にクラスと配置が変化) -->
+    <main id="workspace" class="flex-1 w-full h-full overflow-hidden p-1.5 gap-1.5 bg-zinc-950 flex">
+        
+        <!-- 動的レイアウトコンテナ -->
+        <div id="layoutContainer" class="w-full h-full flex flex-col lg:flex-row gap-1.5">
+            
+            <!-- ================= STREAM 1 UNIT ================= -->
+            <section id="unit1" class="flex flex-col flex-1 min-w-0 min-h-0 bg-zinc-900 rounded-xl border border-zinc-800/90 overflow-hidden shadow-lg transition-all duration-150">
+                <!-- Stream 1 映像ヘッダーバー -->
+                <div class="h-8 bg-zinc-900/90 border-b border-zinc-800 px-3 flex items-center justify-between text-xs shrink-0">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-bold text-[10px] border border-red-500/30">STREAM 1</span>
+                        <span id="streamTitle1" class="text-zinc-300 truncate font-mono text-[11px]">未設定</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="reloadIframe('video', 1)" title="映像を再読み込み" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                            <i class="fa-solid fa-rotate-right text-[11px]"></i>
+                        </button>
+                        <button onclick="openYoutubePage(1)" title="YouTube本家で開く" class="p-1 text-zinc-400 hover:text-red-400 rounded hover:bg-zinc-800 transition">
+                            <i class="fa-brands fa-youtube text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stream 1 コンテンツ領域 (映像 + チャット1) -->
+                <div id="unitContent1" class="flex-1 flex flex-col min-h-0 min-w-0">
+                    <!-- 映像プレイヤー 1 -->
+                    <div id="videoWrapper1" class="relative flex-1 bg-black min-h-[180px] flex items-center justify-center overflow-hidden">
+                        <!-- 未入力時のプレースホルダー -->
+                        <div id="videoPlaceholder1" class="flex flex-col items-center justify-center text-center p-6 max-w-sm">
+                            <div class="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mb-3 text-red-500">
+                                <i class="fa-brands fa-youtube text-2xl"></i>
+                            </div>
+                            <h2 class="text-sm font-bold text-zinc-200 mb-1">1窓目の配信URLを入力してください</h2>
+                            <p class="text-xs text-zinc-500 mb-4">YouTubeのライブ配信URLや動画URLを入力すると、ここにプレイヤーが表示されます。</p>
+                            <div class="flex gap-2">
+                                <button onclick="document.getElementById('urlInput1').focus()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition">
+                                    URLを入力する
+                                </button>
+                                <button onclick="loadDemoStreamSingle(1)" class="px-3 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 text-xs font-medium transition">
+                                    サンプル読込
+                                </button>
+                            </div>
+                        </div>
+                        <!-- YouTube Embed Iframe 1 -->
+                        <div id="videoFrameBox1" class="iframe-container hidden"></div>
+                    </div>
+
+                    <!-- チャットボックス 1 -->
+                    <div id="chatWrapper1" class="h-[42%] min-h-[160px] flex flex-col bg-zinc-900 border-t border-zinc-800 shrink-0 transition-all">
+                        <!-- チャット1 ヘッダー -->
+                        <div class="h-7 bg-zinc-950/90 border-b border-zinc-800/80 px-2.5 flex items-center justify-between text-[11px] shrink-0">
+                            <div class="flex items-center gap-1.5 text-zinc-300 font-medium">
+                                <i class="fa-regular fa-comments text-red-400"></i>
+                                <span>1窓 ライブチャット</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <button onclick="reloadIframe('chat', 1)" title="チャットを再読み込み" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                </button>
+                                <button onclick="popoutChat(1)" title="チャットを別ウィンドウ(ポップアウト)で開く" class="px-2 py-0.5 bg-zinc-800 hover:bg-red-600 text-zinc-200 hover:text-white rounded flex items-center gap-1 transition">
+                                    <i class="fa-solid fa-up-right-from-square text-[10px]"></i>
+                                    <span>別窓で開く</span>
+                                </button>
+                                <button onclick="toggleChat(1)" title="チャット1を隠す" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                    <i class="fa-solid fa-eye-slash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- チャット1 本体 -->
+                        <div class="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
+                            <div id="chatPlaceholder1" class="text-center p-4 text-xs text-zinc-500 space-y-2">
+                                <i class="fa-regular fa-comment-dots text-xl text-zinc-600 block"></i>
+                                <p>配信を読み込むとライブチャットが表示されます</p>
+                            </div>
+                            <div id="chatFrameBox1" class="iframe-container hidden"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ================= STREAM 2 UNIT ================= -->
+            <section id="unit2" class="flex flex-col flex-1 min-w-0 min-h-0 bg-zinc-900 rounded-xl border border-zinc-800/90 overflow-hidden shadow-lg transition-all duration-150">
+                <!-- Stream 2 映像ヘッダーバー -->
+                <div class="h-8 bg-zinc-900/90 border-b border-zinc-800 px-3 flex items-center justify-between text-xs shrink-0">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <span class="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 font-bold text-[10px] border border-sky-500/30">STREAM 2</span>
+                        <span id="streamTitle2" class="text-zinc-300 truncate font-mono text-[11px]">未設定</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <button onclick="reloadIframe('video', 2)" title="映像を再読み込み" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                            <i class="fa-solid fa-rotate-right text-[11px]"></i>
+                        </button>
+                        <button onclick="openYoutubePage(2)" title="YouTube本家で開く" class="p-1 text-zinc-400 hover:text-sky-400 rounded hover:bg-zinc-800 transition">
+                            <i class="fa-brands fa-youtube text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Stream 2 コンテンツ領域 (映像 + チャット2) -->
+                <div id="unitContent2" class="flex-1 flex flex-col min-h-0 min-w-0">
+                    <!-- 映像プレイヤー 2 -->
+                    <div id="videoWrapper2" class="relative flex-1 bg-black min-h-[180px] flex items-center justify-center overflow-hidden">
+                        <!-- 未入力時のプレースホルダー -->
+                        <div id="videoPlaceholder2" class="flex flex-col items-center justify-center text-center p-6 max-w-sm">
+                            <div class="w-14 h-14 rounded-2xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center mb-3 text-sky-400">
+                                <i class="fa-brands fa-youtube text-2xl"></i>
+                            </div>
+                            <h2 class="text-sm font-bold text-zinc-200 mb-1">2窓目の配信URLを入力してください</h2>
+                            <p class="text-xs text-zinc-500 mb-4">もう一つの視点の配信URLを入力すると、2画面同時に視聴＆チャット確認ができます。</p>
+                            <div class="flex gap-2">
+                                <button onclick="document.getElementById('urlInput2').focus()" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition">
+                                    URLを入力する
+                                </button>
+                                <button onclick="loadDemoStreamSingle(2)" class="px-3 py-1.5 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 border border-sky-500/30 text-xs font-medium transition">
+                                    サンプル読込
+                                </button>
+                            </div>
+                        </div>
+                        <!-- YouTube Embed Iframe 2 -->
+                        <div id="videoFrameBox2" class="iframe-container hidden"></div>
+                    </div>
+
+                    <!-- チャットボックス 2 -->
+                    <div id="chatWrapper2" class="h-[42%] min-h-[160px] flex flex-col bg-zinc-900 border-t border-zinc-800 shrink-0 transition-all">
+                        <!-- チャット2 ヘッダー -->
+                        <div class="h-7 bg-zinc-950/90 border-b border-zinc-800/80 px-2.5 flex items-center justify-between text-[11px] shrink-0">
+                            <div class="flex items-center gap-1.5 text-zinc-300 font-medium">
+                                <i class="fa-regular fa-comments text-sky-400"></i>
+                                <span>2窓 ライブチャット</span>
+                            </div>
+                            <div class="flex items-center gap-1">
+                                <button onclick="reloadIframe('chat', 2)" title="チャットを再読み込み" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                    <i class="fa-solid fa-rotate-right"></i>
+                                </button>
+                                <button onclick="popoutChat(2)" title="チャットを別ウィンドウ(ポップアウト)で開く" class="px-2 py-0.5 bg-zinc-800 hover:bg-sky-600 text-zinc-200 hover:text-white rounded flex items-center gap-1 transition">
+                                    <i class="fa-solid fa-up-right-from-square text-[10px]"></i>
+                                    <span>別窓で開く</span>
+                                </button>
+                                <button onclick="toggleChat(2)" title="チャット2を隠す" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                    <i class="fa-solid fa-eye-slash"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- チャット2 本体 -->
+                        <div class="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
+                            <div id="chatPlaceholder2" class="text-center p-4 text-xs text-zinc-500 space-y-2">
+                                <i class="fa-regular fa-comment-dots text-xl text-zinc-600 block"></i>
+                                <p>配信を読み込むとライブチャットが表示されます</p>
+                            </div>
+                            <div id="chatFrameBox2" class="iframe-container hidden"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+
+        <!-- サイドチャットドック用コンテナ (レイアウト「左:映像2つ / 右:チャット並列」選択時に使用) -->
+        <div id="sideDockContainer" class="hidden w-full h-full gap-1.5">
+            <!-- 左側: 映像1 & 映像2 縦並びエリア -->
+            <div id="sideDockVideos" class="flex-[6] flex flex-col gap-1.5 min-w-0 min-h-0"></div>
+            <!-- 右側: チャット1 & チャット2 横並びエリア -->
+            <div id="sideDockChats" class="flex-[4] flex flex-row gap-1.5 min-w-0 min-h-0"></div>
+        </div>
+
+    </main>
+
+    <script>
+        // ==========================================
+        // アプリケーション状態管理
+        // ==========================================
+        const state = {
+            stream1: {
+                url: '',
+                videoId: null,
+                showChat: true
+            },
+            stream2: {
+                url: '',
+                videoId: null,
+                showChat: true
+            },
+            layout: 'split-columns', // 'split-columns' | 'video-top-chat-bottom' | 'side-chat-dock' | 'videos-only'
+            splitRatio: 50,
+            embedDomain: window.location.hostname || 'localhost'
+        };
+
+        // 24時間ライブ配信のサンプルURL (Lofi Girl / Synthwave Boy)
+        const DEMO_STREAMS = {
+            1: 'https://www.youtube.com/watch?v=jfKfPfyJRdk',
+            2: 'https://www.youtube.com/watch?v=4xDzrJKXOOY'
+        };
+
+        // ==========================================
+        // 初期化処理
+        // ==========================================
+        window.addEventListener('DOMContentLoaded', () => {
+            // ドメイン情報の初期化
+            const detected = window.location.hostname || 'localhost';
+            state.embedDomain = detected;
+            document.getElementById('detectedDomainText').textContent = detected;
+            document.getElementById('embedDomainInput').value = detected;
+
+            // URLクエリパラメータ (?v1=...&v2=...&layout=...) からの復元
+            const params = new URLSearchParams(window.location.search);
+            const v1 = params.get('v1');
+            const v2 = params.get('v2');
+            const layoutParam = params.get('layout');
+
+            if (layoutParam && ['split-columns', 'video-top-chat-bottom', 'side-chat-dock', 'videos-only'].includes(layoutParam)) {
+                setLayout(layoutParam, false);
+            }
+
+            if (v1) {
+                document.getElementById('urlInput1').value = v1;
+                loadStream(1, false);
+            }
+            if (v2) {
+                document.getElementById('urlInput2').value = v2;
+                loadStream(2, false);
+            }
+        });
+
+        // ==========================================
+        // YouTube URL から Video ID を抽出する関数
+        // ==========================================
+        function extractYouTubeId(input) {
+            if (!input) return null;
+            const trimmed = input.trim();
+
+            // 11文字のID直接入力の場合
+            if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+                return trimmed;
+            }
+
+            try {
+                // URLオブジェクトとして解析を試みる
+                const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+                const host = url.hostname.replace('www.', '').replace('m.', '');
+
+                if (host === 'youtu.be') {
+                    const id = url.pathname.slice(1).split('/')[0];
+                    if (/^[a-zA-Z0-9_-]{11}$/.test(id)) return id;
+                }
+
+                if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+                    // ?v=XXXXXXXXXXX
+                    const vParam = url.searchParams.get('v');
+                    if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) return vParam;
+
+                    // /live/XXXXXXXXXXX, /embed/XXXXXXXXXXX, /shorts/XXXXXXXXXXX, /v/XXXXXXXXXXX
+                    const pathParts = url.pathname.split('/').filter(Boolean);
+                    if (pathParts.length >= 2 && ['live', 'embed', 'shorts', 'v'].includes(pathParts[0])) {
+                        const candidate = pathParts[1];
+                        if (/^[a-zA-Z0-9_-]{11}$/.test(candidate)) return candidate;
+                    }
+                }
+            } catch (e) {
+                // 正規表現フォールバック
+            }
+
+            const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|live|shorts)\/|.*[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+            const match = trimmed.match(regex);
+            return match ? match[1] : null;
+        }
+
+        // ==========================================
+        // ストリームの読み込み・クリア処理
+        // ==========================================
+        function loadStream(num, notify = true) {
+            const inputEl = document.getElementById(`urlInput${num}`);
+            const rawUrl = inputEl.value.trim();
+
+            if (!rawUrl) {
+                showToast(`${num}窓のURLを入力してください`, 'warning');
+                return;
+            }
+
+            const videoId = extractYouTubeId(rawUrl);
+            if (!videoId) {
+                showToast(`${num}窓: 有効なYouTube URLまたは11桁の動画IDを認識できませんでした`, 'error');
+                return;
+            }
+
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            targetState.url = rawUrl;
+            targetState.videoId = videoId;
+
+            renderStreamEmbeds(num);
+            updateUrlParams();
+
+            if (notify) {
+                showToast(`${num}窓に配信 (ID: ${videoId}) を読み込みました`, 'success');
+            }
+        }
+
+        function loadBothStreams() {
+            const val1 = document.getElementById('urlInput1').value.trim();
+            const val2 = document.getElementById('urlInput2').value.trim();
+
+            if (!val1 && !val2) {
+                showToast('YouTubeのURLを入力してください', 'warning');
+                return;
+            }
+            if (val1) loadStream(1, false);
+            if (val2) loadStream(2, false);
+            showToast('ストリームを更新しました', 'success');
+        }
+
+        function clearStream(num) {
+            document.getElementById(`urlInput${num}`).value = '';
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            targetState.url = '';
+            targetState.videoId = null;
+
+            // Iframeをクリアしてプレースホルダーに戻す
+            document.getElementById(`videoFrameBox${num}`).innerHTML = '';
+            document.getElementById(`videoFrameBox${num}`).classList.add('hidden');
+            document.getElementById(`videoPlaceholder${num}`).classList.remove('hidden');
+
+            document.getElementById(`chatFrameBox${num}`).innerHTML = '';
+            document.getElementById(`chatFrameBox${num}`).classList.add('hidden');
+            document.getElementById(`chatPlaceholder${num}`).classList.remove('hidden');
+
+            document.getElementById(`streamTitle${num}`).textContent = '未設定';
+            updateUrlParams();
+        }
+
+        // Iframe要素の生成と描画
+        function renderStreamEmbeds(num) {
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            const videoId = targetState.videoId;
+            if (!videoId) return;
+
+            // タイトルラベル更新
+            document.getElementById(`streamTitle${num}`).textContent = `ID: ${videoId}`;
+
+            // 1. 動画プレイヤー Iframe
+            const videoBox = document.getElementById(`videoFrameBox${num}`);
+            const videoPlaceholder = document.getElementById(`videoPlaceholder${num}`);
+            const embedVideoUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&playsinline=1&rel=0`;
+
+            videoBox.innerHTML = `
+                <iframe
+                    src="${embedVideoUrl}"
+                    title="YouTube video player ${num}"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    referrerpolicy="strict-origin-when-cross-origin"
+                    allowfullscreen>
+                </iframe>
+            `;
+            videoPlaceholder.classList.add('hidden');
+            videoBox.classList.remove('hidden');
+
+            // 2. ライブチャット Iframe
+            renderChatEmbed(num);
+        }
+
+        function renderChatEmbed(num) {
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            const videoId = targetState.videoId;
+            if (!videoId) return;
+
+            const chatBox = document.getElementById(`chatFrameBox${num}`);
+            const chatPlaceholder = document.getElementById(`chatPlaceholder${num}`);
+            const domain = encodeURIComponent(state.embedDomain);
+            const embedChatUrl = `https://www.youtube.com/live_chat?v=${videoId}&embed_domain=${domain}&dark_theme=1`;
+
+            chatBox.innerHTML = `
+                <iframe
+                    src="${embedChatUrl}"
+                    title="YouTube live chat ${num}"
+                    referrerpolicy="origin">
+                </iframe>
+            `;
+            chatPlaceholder.classList.add('hidden');
+            chatBox.classList.remove('hidden');
+        }
+
+        // 個別再読み込み
+        function reloadIframe(type, num) {
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            if (!targetState.videoId) {
+                showToast(`${num}窓はまだ読み込まれていません`, 'warning');
+                return;
+            }
+            if (type === 'video') {
+                renderStreamEmbeds(num);
+                showToast(`${num}窓の映像・チャットを再読み込みしました`, 'info');
+            } else {
+                renderChatEmbed(num);
+                showToast(`${num}窓のチャットを再読み込みしました`, 'info');
+            }
+        }
+
+        // ==========================================
+        // 1窓 ⇔ 2窓 入れ替え (Swap)
+        // ==========================================
+        function swapStreams() {
+            const tempUrl = state.stream1.url;
+            const tempId = state.stream1.videoId;
+
+            state.stream1.url = state.stream2.url;
+            state.stream1.videoId = state.stream2.videoId;
+
+            state.stream2.url = tempUrl;
+            state.stream2.videoId = tempId;
+
+            document.getElementById('urlInput1').value = state.stream1.url || '';
+            document.getElementById('urlInput2').value = state.stream2.url || '';
+
+            if (state.stream1.videoId) {
+                renderStreamEmbeds(1);
+            } else {
+                clearStream(1);
+            }
+
+            if (state.stream2.videoId) {
+                renderStreamEmbeds(2);
+            } else {
+                clearStream(2);
+            }
+
+            updateUrlParams();
+            showToast('1窓と2窓を入れ替えました', 'info');
+        }
+
+        // ==========================================
+        // レイアウト切り替え制御
+        // ==========================================
+        function setLayout(layoutName, notify = true) {
+            state.layout = layoutName;
+
+            // レイアウトボタンのアクティブ表示更新
+            document.querySelectorAll('.layout-btn').forEach(btn => {
+                btn.classList.remove('bg-red-600', 'text-white');
+                btn.classList.add('bg-zinc-800', 'text-zinc-300');
+            });
+            const activeBtn = document.getElementById(`btn-layout-${layoutName}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('bg-zinc-800', 'text-zinc-300');
+                activeBtn.classList.add('bg-red-600', 'text-white');
+            }
+
+            const layoutContainer = document.getElementById('layoutContainer');
+            const sideDockContainer = document.getElementById('sideDockContainer');
+            const sideDockVideos = document.getElementById('sideDockVideos');
+            const sideDockChats = document.getElementById('sideDockChats');
+
+            const unit1 = document.getElementById('unit1');
+            const unit2 = document.getElementById('unit2');
+            const unitContent1 = document.getElementById('unitContent1');
+            const unitContent2 = document.getElementById('unitContent2');
+            const chatWrapper1 = document.getElementById('chatWrapper1');
+            const chatWrapper2 = document.getElementById('chatWrapper2');
+
+            // まずDOM階層を標準状態（unitContent内にvideoWrapperとchatWrapperがある状態）へ戻す
+            if (chatWrapper1.parentElement !== unitContent1) {
+                unitContent1.appendChild(chatWrapper1);
+            }
+            if (chatWrapper2.parentElement !== unitContent2) {
+                unitContent2.appendChild(chatWrapper2);
+            }
+            if (unit1.parentElement !== layoutContainer) {
+                layoutContainer.appendChild(unit1);
+            }
+            if (unit2.parentElement !== layoutContainer) {
+                layoutContainer.appendChild(unit2);
+            }
+
+            // クラスのリセット
+            layoutContainer.classList.remove('hidden');
+            sideDockContainer.classList.add('hidden');
+            sideDockContainer.classList.remove('flex');
+
+            chatWrapper1.className = 'flex flex-col bg-zinc-900 shrink-0 transition-all';
+            chatWrapper2.className = 'flex flex-col bg-zinc-900 shrink-0 transition-all';
+
+            if (layoutName === 'split-columns') {
+                // 左右2列：各列の上部に動画、下部にチャット
+                unitContent1.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+                unitContent2.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+                chatWrapper1.classList.add('h-[42%]', 'min-h-[160px]', 'border-t', 'border-zinc-800');
+                chatWrapper2.classList.add('h-[42%]', 'min-h-[160px]', 'border-t', 'border-zinc-800');
+            } else if (layoutName === 'video-top-chat-bottom') {
+                // 上段に動画を大きく表示し、下段にチャットを表示（比率を動画60%:チャット40%に）
+                unitContent1.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+                unitContent2.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+                chatWrapper1.classList.add('h-[35%]', 'min-h-[150px]', 'border-t', 'border-zinc-800');
+                chatWrapper2.classList.add('h-[35%]', 'min-h-[150px]', 'border-t', 'border-zinc-800');
+            } else if (layoutName === 'side-chat-dock') {
+                // 左側に映像1・映像2を上下配置、右側にチャット1・チャット2を左右配置
+                layoutContainer.classList.add('hidden');
+                sideDockContainer.classList.remove('hidden');
+                sideDockContainer.classList.add('flex');
+
+                sideDockVideos.appendChild(unit1);
+                sideDockVideos.appendChild(unit2);
+
+                chatWrapper1.classList.add('flex-1', 'h-full', 'rounded-xl', 'border', 'border-zinc-800', 'overflow-hidden');
+                chatWrapper2.classList.add('flex-1', 'h-full', 'rounded-xl', 'border', 'border-zinc-800', 'overflow-hidden');
+
+                sideDockChats.appendChild(chatWrapper1);
+                sideDockChats.appendChild(chatWrapper2);
+            } else if (layoutName === 'videos-only') {
+                // 映像のみ最大化
+                unitContent1.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+                unitContent2.className = 'flex-1 flex flex-col min-h-0 min-w-0';
+            }
+
+            applyChatVisibility();
+            updateSplitRatio(state.splitRatio);
+            updateUrlParams();
+
+            if (notify) {
+                showToast('レイアウトを切り替えました', 'info');
+            }
+        }
+
+        // ==========================================
+        // チャットの表示/非表示制御
+        // ==========================================
+        function toggleChat(num) {
+            if (num === 1) {
+                state.stream1.showChat = !state.stream1.showChat;
+            } else {
+                state.stream2.showChat = !state.stream2.showChat;
+            }
+            // もし「映像のみ最大化」モード中にチャットボタンを押したら通常レイアウトへ戻す
+            if (state.layout === 'videos-only' && (state.stream1.showChat || state.stream2.showChat)) {
+                setLayout('split-columns', false);
+            }
+            applyChatVisibility();
+        }
+
+        function applyChatVisibility() {
+            const chat1 = document.getElementById('chatWrapper1');
+            const chat2 = document.getElementById('chatWrapper2');
+            const btn1 = document.getElementById('btnToggleChat1');
+            const btn2 = document.getElementById('btnToggleChat2');
+            const sideDockChats = document.getElementById('sideDockChats');
+
+            const show1 = state.layout !== 'videos-only' && state.stream1.showChat;
+            const show2 = state.layout !== 'videos-only' && state.stream2.showChat;
+
+            chat1.style.display = show1 ? 'flex' : 'none';
+            chat2.style.display = show2 ? 'flex' : 'none';
+
+            // ボタンの見た目更新
+            if (show1) {
+                btn1.className = 'px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-500/30 font-medium flex items-center gap-1 transition';
+            } else {
+                btn1.className = 'px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-medium flex items-center gap-1 transition';
+            }
+
+            if (show2) {
+                btn2.className = 'px-2 py-0.5 rounded-md bg-sky-600/20 text-sky-400 border border-sky-500/30 font-medium flex items-center gap-1 ml-1 transition';
+            } else {
+                btn2.className = 'px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-medium flex items-center gap-1 ml-1 transition';
+            }
+
+            // サイドドック時に両方チャット非表示なら右カラム自体を隠す
+            if (state.layout === 'side-chat-dock') {
+                if (!show1 && !show2) {
+                    sideDockChats.style.display = 'none';
+                } else {
+                    sideDockChats.style.display = 'flex';
+                }
+            }
+        }
+
+        // ==========================================
+        // 1窓:2窓 サイズ比率スライダー制御
+        // ==========================================
+        function updateSplitRatio(val) {
+            const ratio = parseInt(val, 10);
+            state.splitRatio = ratio;
+            document.getElementById('ratioSlider').value = ratio;
+            document.getElementById('ratioLabel').textContent = `${ratio}:${100 - ratio}`;
+
+            const unit1 = document.getElementById('unit1');
+            const unit2 = document.getElementById('unit2');
+
+            unit1.style.flex = `${ratio} 1 0%`;
+            unit2.style.flex = `${100 - ratio} 1 0%`;
+        }
+
+        // ==========================================
+        // チャットのポップアウト（別ウィンドウ表示）
+        // ==========================================
+        function popoutChat(num) {
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            if (!targetState.videoId) {
+                showToast(`${num}窓の配信URLが設定されていません`, 'warning');
+                return;
+            }
+            const popoutUrl = `https://www.youtube.com/live_chat?is_popout=1&v=${targetState.videoId}`;
+            window.open(popoutUrl, `yt_chat_${num}`, 'width=420,height=680,menubar=no,toolbar=no,location=no,status=no');
+            showToast(`${num}窓のチャットを別ウィンドウで開きました`, 'info');
+        }
+
+        // YouTube本家ページを別タブで開く
+        function openYoutubePage(num) {
+            const targetState = num === 1 ? state.stream1 : state.stream2;
+            if (!targetState.videoId) {
+                showToast(`${num}窓の配信URLが設定されていません`, 'warning');
+                return;
+            }
+            window.open(`https://www.youtube.com/watch?v=${targetState.videoId}`, '_blank', 'noopener,noreferrer');
+        }
+
+        // ==========================================
+        // ユーティリティ機能 (サンプル読込・ペースト・共有・モーダル)
+        // ==========================================
+        function loadDemoStreams() {
+            document.getElementById('urlInput1').value = DEMO_STREAMS[1];
+            document.getElementById('urlInput2').value = DEMO_STREAMS[2];
+            loadStream(1, false);
+            loadStream(2, false);
+            showToast('サンプルの24時間ライブ配信を1窓・2窓に読み込みました', 'success');
+        }
+
+        function loadDemoStreamSingle(num) {
+            document.getElementById(`urlInput${num}`).value = DEMO_STREAMS[num];
+            loadStream(num, true);
+        }
+
+        async function pasteToInput(num) {
+            const inputEl = document.getElementById(`urlInput${num}`);
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text) {
+                    inputEl.value = text;
+                    loadStream(num, true);
+                } else {
+                    inputEl.focus();
+                    showToast('クリップボードが空です。キーボードの Ctrl+V で貼り付けてください', 'info');
+                }
+            } catch (err) {
+                inputEl.focus();
+                showToast('入力欄を選択しました。Ctrl+V (Macは⌘+V) でURLを貼り付けてください', 'info');
+            }
+        }
+
+        function applyCustomDomain() {
+            const custom = document.getElementById('embedDomainInput').value.trim();
+            if (!custom) {
+                showToast('ドメイン名を入力してください', 'warning');
+                return;
+            }
+            state.embedDomain = custom;
+            if (state.stream1.videoId) renderChatEmbed(1);
+            if (state.stream2.videoId) renderChatEmbed(2);
+            toggleModal('settingsModal', false);
+            showToast(`チャット埋め込みドメインを「${custom}」に更新しました`, 'success');
+        }
+
+        function updateUrlParams() {
+            try {
+                const url = new URL(window.location.href);
+                if (state.stream1.videoId) {
+                    url.searchParams.set('v1', state.stream1.videoId);
+                } else {
+                    url.searchParams.delete('v1');
+                }
+                if (state.stream2.videoId) {
+                    url.searchParams.set('v2', state.stream2.videoId);
+                } else {
+                    url.searchParams.delete('v2');
+                }
+                url.searchParams.set('layout', state.layout);
+                window.history.replaceState({}, '', url.toString());
+            } catch (e) {
+                // サンドボックス環境等でreplaceStateが制限されている場合は無視
+            }
+        }
+
+        function copyShareUrl() {
+            const baseUrl = window.location.href.split('?')[0];
+            const params = new URLSearchParams();
+            if (state.stream1.videoId) params.set('v1', state.stream1.videoId);
+            if (state.stream2.videoId) params.set('v2', state.stream2.videoId);
+            params.set('layout', state.layout);
+
+            const shareUrl = params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
+
+            // iframe環境互換のコピー処理
+            const tempInput = document.createElement('textarea');
+            tempInput.value = shareUrl;
+            document.body.appendChild(tempInput);
+            tempInput.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempInput);
+
+            showToast('現在の2窓構成URLをクリップボードにコピーしました！', 'success');
+        }
+
+        function toggleHeaderCollapse(collapse) {
+            const topBar = document.getElementById('topBar');
+            const expandBtn = document.getElementById('expandHeaderBtn');
+            if (collapse) {
+                topBar.classList.add('hidden');
+                expandBtn.classList.remove('hidden');
+                expandBtn.classList.add('flex');
+            } else {
+                topBar.classList.remove('hidden');
+                expandBtn.classList.add('hidden');
+                expandBtn.classList.remove('flex');
+            }
+        }
+
+        function toggleModal(modalId, show) {
+            const modal = document.getElementById(modalId);
+            if (show) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } else {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        }
+
+        // トースト通知表示
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+
+            const colorStyles = {
+                success: 'border-emerald-500/40 bg-zinc-900/95 text-emerald-300',
+                error: 'border-red-500/40 bg-zinc-900/95 text-red-300',
+                warning: 'border-amber-500/40 bg-zinc-900/95 text-amber-300',
+                info: 'border-sky-500/40 bg-zinc-900/95 text-sky-300'
+            };
+            const icons = {
+                success: 'fa-circle-check text-emerald-400',
+                error: 'fa-circle-xmark text-red-400',
+                warning: 'fa-triangle-exclamation text-amber-400',
+                info: 'fa-circle-info text-sky-400'
+            };
+
+            toast.className = `pointer-events-auto flex items-center gap-2.5 px-4 py-2.5 rounded-xl border shadow-xl backdrop-blur-md text-xs font-medium transition-all duration-300 transform translate-y-2 opacity-0 ${colorStyles[type] || colorStyles.info}`;
+            toast.innerHTML = `
+                <i class="fa-solid ${icons[type] || icons.info} text-sm"></i>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(toast);
+
+            requestAnimationFrame(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('translate-y-2', 'opacity-0');
+                setTimeout(() => toast.remove(), 300);
+            }, 3200);
+        }
+    </script>
+</body>
+</html>
