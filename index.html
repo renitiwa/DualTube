@@ -14,6 +14,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- YouTube IFrame Player API -->
     <script src="https://www.youtube.com/iframe_api"></script>
+    <!-- Google Identity Services (OAuth 2.0 YouTube API連携用) -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 
     <script>
         tailwind.config = {
@@ -173,6 +175,158 @@
         <button onclick="dismissIosBanner()" class="text-white/80 hover:text-white p-1">
             <i class="fa-solid fa-xmark"></i>
         </button>
+    </div>
+
+    <!-- ==========================================
+         YouTube アカウントログイン・広告ガード連携モーダル
+    =========================================== -->
+    <div id="ytAuthModalBackdrop" onclick="toggleAuthModal(false)" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-[80] hidden transition-opacity"></div>
+    <div id="ytAuthModal" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[95vw] max-w-xl max-h-[90dvh] bg-zinc-900 border border-zinc-700/90 rounded-2xl shadow-2xl z-[85] hidden flex-col overflow-hidden">
+        <!-- モーダルヘッダー -->
+        <div class="px-5 py-3.5 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-red-600/20 border border-red-500/40 flex items-center justify-center text-red-400">
+                    <i class="fa-brands fa-youtube text-lg"></i>
+                </div>
+                <div>
+                    <h2 class="font-bold text-sm text-white">YouTube アカウント連携 ＆ 広告ガード設定</h2>
+                    <p class="text-[11px] text-zinc-400">ログインしてコメント投稿・YouTube Premium広告非表示・自動広告スキップを有効化</p>
+                </div>
+            </div>
+            <button onclick="toggleAuthModal(false)" class="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition">
+                <i class="fa-solid fa-xmark text-base"></i>
+            </button>
+        </div>
+
+        <!-- モーダルボディ -->
+        <div class="p-5 overflow-y-auto space-y-4 text-xs">
+            <!-- 現在のアカウント状態カード -->
+            <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-3.5 flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <img id="modalUserAvatar" src="" alt="" class="w-10 h-10 rounded-full object-cover border border-red-500/50 hidden shrink-0">
+                    <div id="modalUserFallbackIcon" class="w-10 h-10 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 shrink-0">
+                        <i class="fa-regular fa-user text-base"></i>
+                    </div>
+                    <div class="min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span id="modalUserName" class="font-bold text-sm text-white truncate">未ログイン（ゲスト状態）</span>
+                            <span id="modalAuthBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700">未連携</span>
+                        </div>
+                        <p id="modalUserSubtext" class="text-[11px] text-zinc-400 truncate mt-0.5">ログインするとチャット参加・コメント投稿・Premium広告オフが利用できます</p>
+                    </div>
+                </div>
+                <button id="btnLogoutAccount" onclick="logoutYouTubeAccount()" class="hidden px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-red-600/80 text-zinc-300 hover:text-white font-semibold text-[11px] transition shrink-0">
+                    連携解除
+                </button>
+            </div>
+
+            <!-- ステップ1: ブラウザセッション・ログイン & YouTube Premium 同期 (最も簡単・設定不要) -->
+            <div class="bg-gradient-to-br from-red-950/30 to-zinc-950 border border-red-500/30 rounded-xl p-4 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-zinc-100 text-xs flex items-center gap-1.5">
+                        <i class="fa-solid fa-key text-red-400"></i>
+                        方法1：ブラウザのYouTubeアカウントでログイン（推奨・設定不要）
+                    </span>
+                    <span class="text-[10px] bg-red-500/20 text-red-300 border border-red-500/30 px-2 py-0.5 rounded-full font-semibold">Premium / チャット対応</span>
+                </div>
+                <p class="text-[11px] text-zinc-300 leading-relaxed">
+                    ポップアップでYouTube公式にログインし、ブラウザのCookieアクセスを許可すると、埋め込みチャット欄から直接コメントでき、<strong>YouTube Premium加入アカウントなら動画広告も非表示</strong>になります。
+                </p>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    <button onclick="openYouTubePopupLogin()" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow transition">
+                        <i class="fa-brands fa-youtube"></i>
+                        <span>1. YouTubeログイン窓を開く</span>
+                    </button>
+                    <button onclick="requestBrowserStorageAccess()" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold py-2 px-3 rounded-xl border border-zinc-700 flex items-center justify-center gap-1.5 transition" title="iPhone/iPadやSafari/ChromeでログインCookieを埋め込み窓へ引き継ぐ許可を求めます">
+                        <i class="fa-solid fa-cookie-bite text-amber-400"></i>
+                        <span>2. Cookie連携を許可</span>
+                    </button>
+                    <button onclick="syncLoginSessionAllStreams()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-3 rounded-xl flex items-center justify-center gap-1.5 shadow transition">
+                        <i class="fa-solid fa-rotate"></i>
+                        <span>3. 全窓にログイン反映</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ステップ2: Google OAuth 2.0 API 連携 (サイト内フォームから動画コメント＆ライブチャット直接送信) -->
+            <div class="bg-zinc-950/90 border border-zinc-800 rounded-xl p-4 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-zinc-100 text-xs flex items-center gap-1.5">
+                        <i class="fa-brands fa-google text-sky-400"></i>
+                        方法2：Google OAuth 2.0 API連携（下部バーから動画コメント・チャット直接送信）
+                    </span>
+                    <button onclick="document.getElementById('oauthHelpBox').classList.toggle('hidden')" class="text-[10px] text-sky-400 hover:underline">
+                        Client IDとは？
+                    </button>
+                </div>
+
+                <div id="oauthHelpBox" class="hidden bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 text-[11px] text-zinc-400 space-y-1 leading-relaxed">
+                    <p>Google Cloud Consoleで「YouTube Data API v3」を有効化し、OAuth 2.0 クライアントID（ウェブアプリケーション）を発行して貼り付けると、各パネル下部の入力欄から公式API経由で<strong>動画への通常コメント投稿</strong>や<strong>ライブチャット送信</strong>が直接行えます。</p>
+                    <p class="text-zinc-500">※未入力の場合でも、下部バーからワンタップで自動コピー＆投稿画面フォーカス（スマート補助モード）が使えます。</p>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-2">
+                    <input id="oauthClientIdInput" type="text" placeholder="Google OAuth クライアントID (任意: xxxx.apps.googleusercontent.com)"
+                        class="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-sky-500">
+                    <button onclick="startGoogleOAuthLogin()" class="bg-sky-600 hover:bg-sky-500 text-white font-bold px-4 py-2 rounded-xl flex items-center justify-center gap-1.5 shrink-0 shadow transition">
+                        <i class="fa-brands fa-google"></i>
+                        <span>GoogleでAPIログイン</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- ステップ3: 広告削除・自動スキップエンジン (Ad-Guard Pro) -->
+            <div class="bg-gradient-to-br from-emerald-950/35 to-zinc-950 border border-emerald-500/30 rounded-xl p-4 space-y-3">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-zinc-100 text-xs flex items-center gap-1.5">
+                        <i class="fa-solid fa-shield-virus text-emerald-400"></i>
+                        広告ガード（Ad-Guard 自動消音・高速スキップ・広告カット）
+                    </span>
+                    <button onclick="toggleAdGuard()" id="modalBtnAdGuard" class="px-3 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white transition">
+                        ON (有効)
+                    </button>
+                </div>
+                <p class="text-[11px] text-zinc-300 leading-relaxed">
+                    配信の前後・途中に挿入されるYouTube広告を自動検知し、<strong>①広告音声の即時ミュート、②16倍速早送り＆シークによる自動スキップ、③スキップボタン操作の自動ロック解除</strong>を行います。消えない広告も「🚫広告カット」ボタン1つで即座に除去できます。
+                </p>
+
+                <!-- 埋め込みホストの選択 (Premium優先 vs プライバシー軽量ホスト) -->
+                <div class="grid grid-cols-2 gap-2 pt-1">
+                    <button onclick="setEmbedHostMode('youtube')" id="hostBtn-youtube" class="p-2.5 rounded-xl border text-left transition">
+                        <div class="font-bold text-zinc-100 text-[11px] flex items-center gap-1.5">
+                            <i class="fa-brands fa-youtube text-red-400"></i>
+                            <span>標準ホスト (youtube.com)</span>
+                        </div>
+                        <div class="text-[10px] text-zinc-400 mt-0.5">ログイン情報・YouTube Premiumの広告オフを引き継ぐ場合に最適</div>
+                    </button>
+                    <button onclick="setEmbedHostMode('nocookie')" id="hostBtn-nocookie" class="p-2.5 rounded-xl border text-left transition">
+                        <div class="font-bold text-zinc-100 text-[11px] flex items-center gap-1.5">
+                            <i class="fa-solid fa-user-shield text-emerald-400"></i>
+                            <span>広告軽減ホスト (nocookie.com)</span>
+                        </div>
+                        <div class="text-[10px] text-zinc-400 mt-0.5">トラッキング型広告を抑制したいゲスト視聴時に最適</div>
+                    </button>
+                </div>
+
+                <div class="pt-1 flex items-center justify-between border-t border-zinc-800/80">
+                    <span class="text-[11px] text-zinc-300">各チャット下部に「コメント・チャット直接投稿バー」を表示:</span>
+                    <button onclick="toggleDirectCommentBar()" id="modalBtnCommentBar" class="px-3 py-1 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-bold text-[11px]">
+                        表示中
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- モーダルフッター -->
+        <div class="px-5 py-3 bg-zinc-950 border-t border-zinc-800 flex items-center justify-between">
+            <button onclick="skipAdsAllStreams(true)" class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5">
+                <i class="fa-solid fa-ban"></i>
+                <span>今すぐ全窓の広告を強制カット</span>
+            </button>
+            <button onclick="toggleAuthModal(false)" class="bg-red-600 hover:bg-red-500 text-white px-5 py-1.5 rounded-xl text-xs font-bold transition">
+                閉じる
+            </button>
+        </div>
     </div>
 
     <!-- ==========================================
@@ -518,6 +672,17 @@
             <span class="hidden sm:inline">LIVE同期</span>
         </button>
 
+        <!-- ミニバー: 広告カット -->
+        <button onclick="skipAdsAllStreams(true)" class="px-2.5 py-1 rounded-full bg-zinc-800 hover:bg-emerald-600 text-emerald-300 hover:text-white text-[10px] font-bold flex items-center gap-1 shrink-0 transition" title="全窓の広告を即座にスキップ・クリーン再読込">
+            <i class="fa-solid fa-ban"></i>
+            <span class="hidden sm:inline">広告カット</span>
+        </button>
+
+        <!-- ミニバー: アカウント/ログイン -->
+        <button onclick="toggleAuthModal(true)" class="px-2.5 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-bold flex items-center gap-1 shrink-0 transition" title="YouTubeアカウント連携・広告ガード設定">
+            <i class="fa-solid fa-user-check text-red-400"></i>
+        </button>
+
         <!-- ミニバー: 上部UIを再表示 -->
         <button onclick="toggleHeaderCollapse(false)" class="px-2.5 py-1 rounded-full bg-red-600 hover:bg-red-500 text-white font-bold text-[10px] flex items-center gap-1 shrink-0 transition" title="上部メニューバーを表示">
             <i class="fa-solid fa-chevron-down"></i>
@@ -562,10 +727,23 @@
                         <i class="fa-solid fa-play text-[10px]"></i>
                         <span>全窓一括再生</span>
                     </button>
+
+                    <!-- ワンタップ全窓広告カットボタン -->
+                    <button onclick="skipAdsAllStreams(true)" class="bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white border border-amber-500/40 px-2.5 py-1 rounded-xl text-xs font-bold transition flex items-center gap-1" title="広告が表示された窓を即座にスキップ・クリーン再読込します">
+                        <i class="fa-solid fa-ban text-[11px]"></i>
+                        <span class="hidden sm:inline">広告カット</span>
+                    </button>
                 </div>
 
                 <!-- 右側アクションボタン群 -->
                 <div class="flex items-center gap-1.5 flex-wrap">
+                    <!-- YouTube アカウントログイン・広告ガード設定ボタン -->
+                    <button onclick="toggleAuthModal(true)" id="btnHeaderAuth" class="bg-gradient-to-r from-red-600/25 to-rose-600/25 hover:from-red-600 hover:to-rose-600 text-red-200 hover:text-white px-2.5 py-1 rounded-xl text-xs font-bold border border-red-500/40 transition flex items-center gap-1.5 shadow-sm" title="YouTubeアカウントでログインしてコメント投稿・広告削除を有効化">
+                        <img id="headerUserAvatar" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden">
+                        <i id="headerUserIcon" class="fa-brands fa-youtube text-red-400"></i>
+                        <span id="headerUserLabel">YouTubeログイン</span>
+                    </button>
+
                     <button onclick="toggleUrlInputsBar()" id="btnToggleUrlBar" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1 rounded-xl text-xs font-medium border border-zinc-700/80 transition flex items-center gap-1" title="URL入力欄の表示/折りたたみ">
                         <i class="fa-solid fa-link text-sky-400"></i>
                         <span class="hidden sm:inline">URL欄</span>
@@ -718,6 +896,12 @@
                         <i id="uiLockIcon" class="fa-solid fa-shield-halved"></i>
                         <span>UI非表示:<strong id="uiLockStateText">ON</strong></span>
                     </button>
+
+                    <!-- 広告ガード自動スキップ切替ボタン -->
+                    <button onclick="toggleAdGuard()" id="btnTopAdGuard" class="px-2 py-1 rounded-xl text-[11px] font-semibold flex items-center gap-1 border transition bg-emerald-600/15 text-emerald-300 border-emerald-500/40" title="広告の自動消音・倍速スキップ・広告カット機能">
+                        <i class="fa-solid fa-shield-virus text-emerald-400"></i>
+                        <span>広告ガード:<strong id="topAdGuardText">ON</strong></span>
+                    </button>
                 </div>
 
                 <!-- 3. レイアウトクイック切替 -->
@@ -852,7 +1036,18 @@
             panelGap: 6,             // パネル間の隙間 (px)
             headerCollapsed: false,  // 上部UI非表示（没入モード）
             urlBarCollapsed: false,  // URL入力欄の折りたたみ状態
-            embedDomain: window.location.hostname || 'localhost'
+            embedDomain: window.location.hostname || 'localhost',
+            // ログイン・コメント投稿・広告ガード設定
+            adGuard: true,               // 広告の自動検知・ミュート・スキップを有効化
+            embedHost: 'youtube',        // 'youtube' (標準・Premium連携用) | 'nocookie' (youtube-nocookie.com)
+            showDirectCommentBar: true,  // 各チャットパネル下部にコメント＆チャット投稿バーを表示
+            oauthClientId: '',           // Google OAuth 2.0 Client ID (任意)
+            authUser: {
+                loggedIn: false,
+                mode: 'none',            // 'none' | 'session' | 'oauth'
+                name: '',
+                avatar: ''
+            }
         };
 
         let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -863,6 +1058,14 @@
         const userPaused = { 1: false, 2: false, 3: false, 4: false };
         const tempUnlocked = { 1: false, 2: false, 3: false, 4: false };
         const loadedChatVideoId = { 1: null, 2: null, 3: null, 4: null };
+
+        // OAuth 2.0 アクセストークン・各窓のactiveLiveChatId・投稿モード管理
+        let oauthAccessToken = null;
+        let googleTokenClient = null;
+        const activeLiveChatIds = { 1: null, 2: null, 3: null, 4: null };
+        const postTargetMode = { 1: 'chat', 2: 'chat', 3: 'chat', 4: 'chat' }; // 'chat' (ライブチャット) | 'comment' (動画コメント)
+        const adPlayingState = { 1: false, 2: false, 3: false, 4: false };
+        let adGuardIntervalId = null;
 
         // ライブ配信の自然バッファベースライン計測 & クールダウン管理 (過剰シーク・頻繁な更新を根絶するための状態)
         const liveMetrics = {
@@ -930,7 +1133,11 @@
                             <button onclick="seekToLiveSingle(${num}, true)" title="最新のライブ位置へ手動で追いつく" class="p-1 text-amber-400 hover:text-amber-300 rounded hover:bg-zinc-800 transition">
                                 <i class="fa-solid fa-bolt text-[11px]"></i>
                             </button>
-                            <button onclick="toggleTempUnlockSingle(${num})" id="tempUnlockBtn${num}" title="この窓だけ一時的にYouTube標準ボタン（画質変更など）を操作可能にする" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                            <button onclick="skipAdSingle(${num}, true)" title="広告を強制カット（現在の再生位置を維持してクリーン再読込）" class="px-1.5 py-0.5 text-emerald-400 hover:text-white hover:bg-emerald-600 rounded transition text-[10px] font-bold flex items-center gap-0.5">
+                                <i class="fa-solid fa-ban text-[10px]"></i>
+                                <span class="hidden xl:inline">広告カット</span>
+                            </button>
+                            <button onclick="toggleTempUnlockSingle(${num})" id="tempUnlockBtn${num}" title="この窓だけ一時的にYouTube標準ボタン（画質変更・広告スキップなど）を操作可能にする" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
                                 <i class="fa-solid fa-gear text-[11px]"></i>
                             </button>
                             <button onclick="cycleChatPositionQuick(${num})" title="チャット${num}の配置切替（下→右→透過重ね→非表示）" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
@@ -947,6 +1154,13 @@
 
                     <!-- 映像本体領域 -->
                     <div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+                        <!-- 広告検知時の自動スキップ通知オーバーレイ -->
+                        <div id="adBanner${num}" class="hidden absolute top-2 right-2 z-30 items-center gap-2 bg-amber-600/95 text-white px-3 py-1 rounded-full text-[11px] font-bold shadow-lg backdrop-blur-md">
+                            <i class="fa-solid fa-shield-virus animate-spin"></i>
+                            <span>広告を検知・自動消音＆スキップ処理中...</span>
+                            <button onclick="skipAdSingle(${num}, true)" class="underline bg-black/30 px-2 py-0.5 rounded-full hover:bg-black/50">即カット</button>
+                        </div>
+
                         <div id="videoPlaceholder${num}" class="flex flex-col items-center justify-center text-center p-4 max-w-xs z-10">
                             <div class="w-10 h-10 rounded-2xl ${t.bgSoft} border ${t.border} flex items-center justify-center mb-2 ${t.text}">
                                 <i class="fa-brands fa-youtube text-xl"></i>
@@ -976,6 +1190,7 @@
                                 <span class="ch-name-label-${num} font-semibold max-w-[110px] truncate">${num}窓</span>
                                 <span id="shieldAudioStatus${num}" class="text-emerald-400 font-bold">🔊 音声ON</span>
                                 <button onclick="event.stopPropagation(); seekToLiveSingle(${num}, true);" class="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 font-bold transition" title="最新ライブ位置へ同期">⚡LIVE</button>
+                                <button onclick="event.stopPropagation(); skipAdSingle(${num}, true);" class="px-1.5 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-300 font-bold transition" title="広告を強制カット">🚫広告カット</button>
                                 <button onclick="event.stopPropagation(); togglePlayPause(${num});" class="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition" title="一時停止/再生">⏯</button>
                             </div>
                         </div>
@@ -983,7 +1198,7 @@
                 `;
                 stage.appendChild(vPanel);
 
-                // 2. チャットパネル (#chatPanel1〜4)
+                // 2. チャットパネル (#chatPanel1〜4) ＋ サイト内コメント＆ライブチャット直接投稿バー
                 const cPanel = document.createElement('section');
                 cPanel.id = `chatPanel${num}`;
                 cPanel.className = 'zero-reload-panel chat-panel shadow-lg';
@@ -996,6 +1211,10 @@
                             <span class="text-zinc-500 text-[10px] shrink-0">チャット</span>
                         </div>
                         <div class="flex items-center gap-1 shrink-0">
+                            <button onclick="toggleAuthModal(true)" title="YouTubeアカウント連携・ログイン" class="px-1.5 py-0.5 text-red-400 hover:text-white rounded hover:bg-red-600/30 transition text-[10px] flex items-center gap-0.5">
+                                <i class="fa-brands fa-youtube"></i>
+                                <span class="hidden sm:inline">連携</span>
+                            </button>
                             <button onclick="cycleChatPositionQuick(${num})" title="チャットの表示位置を切替" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition text-[10px]">
                                 <i class="fa-solid fa-up-down-left-right"></i>
                             </button>
@@ -1017,6 +1236,22 @@
                             <p class="text-[11px]">配信を読み込むとチャットが表示されます</p>
                         </div>
                         <div id="chatFrameBox${num}" class="iframe-container hidden"></div>
+                    </div>
+                    <!-- 下部：サイト内から直接ライブチャット＆動画コメントを投稿できるバー -->
+                    <div id="directPostBar${num}" class="bg-zinc-900 border-t border-zinc-800 p-1.5 flex flex-col gap-1 shrink-0">
+                        <div class="flex items-center gap-1">
+                            <button onclick="switchPostTargetMode(${num})" id="postModeBtn${num}" class="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-[10px] font-bold ${t.text} border border-zinc-700 shrink-0 transition flex items-center gap-1" title="クリックで「ライブチャット送信」と「動画への通常コメント投稿」を切り替え">
+                                <i class="fa-regular fa-comment-dots"></i>
+                                <span id="postModeLabel${num}">チャット</span>
+                            </button>
+                            <input id="directCommentInput${num}" type="text" placeholder="${num}窓へコメント・チャットを入力..."
+                                class="flex-1 bg-zinc-950 border border-zinc-700/90 focus:border-red-500 rounded-lg px-2.5 py-1 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none min-w-0"
+                                onkeydown="if(event.key==='Enter') submitDirectCommentOrChat(${num})">
+                            <button onclick="submitDirectCommentOrChat(${num})" class="px-2.5 py-1 rounded-lg ${t.btnActive} hover:opacity-90 text-[11px] font-bold shrink-0 transition flex items-center gap-1 shadow">
+                                <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                                <span>送信</span>
+                            </button>
+                        </div>
                     </div>
                 `;
                 stage.appendChild(cPanel);
@@ -1102,10 +1337,10 @@
                     }
                 }
             }
-
-            // 5. iOS/iPad 自動復帰エンジン (過干渉しない安全設計) & ライブ遅延ベースライン監視ループ開始
+            // 5. iOS/iPad 自動復帰エンジン (過干渉しない安全設計) & ライブ遅延ベースライン監視 & 広告ガード監視開始
             startIosKeepAliveEngine();
             startLiveSyncWatcher();
+            startAdGuardWatcher();
 
             // 6. ウィンドウリサイズ時に座標を再計算（DOM移動なし）
             window.addEventListener('resize', () => {
@@ -1642,11 +1877,17 @@
             const box = document.getElementById(`videoFrameBox${num}`);
             box.innerHTML = `<div id="ytPlayer${num}"></div>`;
             playerReady[num] = false;
+            activeLiveChatIds[num] = null;
+
+            const hostUrl = state.embedHost === 'nocookie'
+                ? 'https://www.youtube-nocookie.com'
+                : 'https://www.youtube.com';
 
             players[num] = new YT.Player(`ytPlayer${num}`, {
                 width: '100%',
                 height: '100%',
                 videoId: videoId,
+                host: hostUrl,
                 playerVars: {
                     autoplay: 1,
                     mute: 1,                     // iOS/iPadOSで他窓を停止させないため初期起動は必ずミュート
@@ -1669,9 +1910,13 @@
                         } catch (_) {}
                         setTimeout(() => applyExclusiveAudioToPlayers(), 300);
                         tryExtractPlayerVideoData(num, event.target);
+                        if (oauthAccessToken) {
+                            fetchActiveLiveChatId(num, videoId);
+                        }
                     },
                     onStateChange: (event) => {
                         updatePlayPauseIcon(num, event.data);
+                        checkAndBlockAd(num);
 
                         if (event.data === YT.PlayerState.PLAYING) {
                             tryExtractPlayerVideoData(num, event.target);
@@ -2907,8 +3152,603 @@
             updateUiLockDOM();
             updateAutoLiveSyncDOM();
             updateIosKeepAliveDOM();
+            updateAuthAndAdGuardDOM();
             toggleHeaderCollapse(state.headerCollapsed);
             applyFullLayoutEngine();
+        }
+
+        // ==========================================
+        // YouTube アカウント連携 (ブラウザセッション同期 & Google OAuth 2.0 API)
+        // ==========================================
+        function toggleAuthModal(show) {
+            const modal = document.getElementById('ytAuthModal');
+            const backdrop = document.getElementById('ytAuthModalBackdrop');
+            if (!modal || !backdrop) return;
+            if (show) {
+                document.getElementById('oauthClientIdInput').value = state.oauthClientId || '';
+                updateAuthAndAdGuardDOM();
+                backdrop.classList.remove('hidden');
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            } else {
+                backdrop.classList.add('hidden');
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        }
+
+        // 方法1: YouTube 公式ログインポップアップを開いてファーストパーティCookieセッションを確立
+        function openYouTubePopupLogin() {
+            const loginUrl = 'https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26next%3Dhttps%253A%252F%252Fwww.youtube.com%252F';
+            const popup = window.open(loginUrl, 'yt_login_popup', 'width=520,height=680,menubar=no,toolbar=no,location=yes,status=no');
+
+            state.embedHost = 'youtube';
+            state.authUser = {
+                loggedIn: true,
+                mode: 'session',
+                name: 'YouTube セッション連携中',
+                avatar: ''
+            };
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+
+            showToast('別窓でYouTubeログインを開きました。ログイン完了後に「3. 全窓にログイン反映」を押してください', 'info');
+            if (!popup) {
+                showToast('ポップアップがブロックされました。ブラウザのポップアップ許可を確認してください', 'warning');
+            }
+        }
+
+        // iPad / Safari / Chrome 向け Storage Access API によるクロスサイトCookie許可リクエスト
+        async function requestBrowserStorageAccess() {
+            try {
+                if (typeof document.requestStorageAccess === 'function') {
+                    await document.requestStorageAccess();
+                    showToast('🍪 ブラウザのCookie・ストレージ連携が許可されました！', 'success');
+                } else {
+                    showToast('お使いのブラウザは標準でCookie連携に対応しています', 'info');
+                }
+            } catch (_) {
+                showToast('Cookie連携の確認を完了しました。「3. 全窓にログイン反映」でチャット・映像を更新できます', 'info');
+            }
+            state.authUser.loggedIn = true;
+            if (state.authUser.mode === 'none') {
+                state.authUser.mode = 'session';
+                state.authUser.name = 'YouTube ブラウザ連携済';
+            }
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+        }
+
+        // 現在の全窓の映像プレイヤーとライブチャットにログイン状態を反映
+        function syncLoginSessionAllStreams() {
+            state.embedHost = 'youtube';
+            state.authUser.loggedIn = true;
+            if (!state.authUser.name) state.authUser.name = 'YouTube ログイン済';
+            if (state.authUser.mode === 'none') state.authUser.mode = 'session';
+
+            for (let num = 1; num <= state.windowCount; num++) {
+                if (state.streams[num].videoId) {
+                    if (players[num] && typeof players[num].destroy === 'function') {
+                        try { players[num].destroy(); } catch (_) {}
+                    }
+                    players[num] = null;
+                    playerReady[num] = false;
+                    loadedChatVideoId[num] = null;
+                    activateStreamView(num, false);
+                }
+            }
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+            showToast('✅ 全窓のプレイヤーとチャット欄にYouTubeログイン状態を反映しました', 'success');
+        }
+
+        // 方法2: Google Identity Services (OAuth 2.0) で YouTube Data API v3 トークンを取得
+        function startGoogleOAuthLogin() {
+            const clientIdInput = document.getElementById('oauthClientIdInput').value.trim();
+            state.oauthClientId = clientIdInput;
+            saveStateToStorage();
+
+            if (!clientIdInput) {
+                showToast('OAuthクライアントIDが未入力のため、設定不要の「ブラウザセッション連携モード」を有効化しました', 'info');
+                state.authUser = {
+                    loggedIn: true,
+                    mode: 'session',
+                    name: 'YouTube ブラウザ連携済',
+                    avatar: ''
+                };
+                updateAuthAndAdGuardDOM();
+                saveStateToStorage();
+                return;
+            }
+
+            if (!window.google || !window.google.accounts || !window.google.accounts.oauth2) {
+                showToast('Google認証スクリプトを読み込み中です。数秒後にもう一度お試しください', 'warning');
+                return;
+            }
+
+            try {
+                googleTokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: clientIdInput,
+                    scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
+                    callback: async (tokenResponse) => {
+                        if (tokenResponse && tokenResponse.access_token) {
+                            oauthAccessToken = tokenResponse.access_token;
+                            await fetchYouTubeAccountProfile();
+                            for (let num = 1; num <= 4; num++) {
+                                if (state.streams[num].videoId) {
+                                    fetchActiveLiveChatId(num, state.streams[num].videoId);
+                                }
+                            }
+                            showToast('🎉 Google OAuth 2.0 でYouTubeアカウントにログインしました！下部バーから直接コメント送信が可能です', 'success');
+                        }
+                    }
+                });
+                googleTokenClient.requestAccessToken({ prompt: 'consent' });
+            } catch (err) {
+                showToast('OAuthクライアントIDの形式を確認してください', 'error');
+            }
+        }
+
+        async function fetchYouTubeAccountProfile() {
+            if (!oauthAccessToken) return;
+            try {
+                const res = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+                    headers: { Authorization: `Bearer ${oauthAccessToken}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const item = data.items && data.items[0];
+                    if (item && item.snippet) {
+                        state.authUser = {
+                            loggedIn: true,
+                            mode: 'oauth',
+                            name: item.snippet.title || 'YouTube ユーザー',
+                            avatar: item.snippet.thumbnails?.default?.url || ''
+                        };
+                        updateAuthAndAdGuardDOM();
+                        saveStateToStorage();
+                    }
+                }
+            } catch (_) {}
+        }
+
+        async function fetchActiveLiveChatId(num, videoId) {
+            if (!oauthAccessToken || !videoId) return;
+            try {
+                const res = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${encodeURIComponent(videoId)}`, {
+                    headers: { Authorization: `Bearer ${oauthAccessToken}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    const liveDetails = data.items?.[0]?.liveStreamingDetails;
+                    if (liveDetails && liveDetails.activeLiveChatId) {
+                        activeLiveChatIds[num] = liveDetails.activeLiveChatId;
+                    }
+                }
+            } catch (_) {}
+        }
+
+        function logoutYouTubeAccount() {
+            if (oauthAccessToken && window.google?.accounts?.oauth2) {
+                try { google.accounts.oauth2.revoke(oauthAccessToken, () => {}); } catch (_) {}
+            }
+            oauthAccessToken = null;
+            state.authUser = { loggedIn: false, mode: 'none', name: '', avatar: '' };
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+            showToast('YouTubeアカウント連携を解除しました', 'info');
+        }
+
+        // ==========================================
+        // サイト内からの直接ライブチャット送信 ＆ 動画コメント投稿
+        // ==========================================
+        function switchPostTargetMode(num) {
+            postTargetMode[num] = postTargetMode[num] === 'chat' ? 'comment' : 'chat';
+            const labelEl = document.getElementById(`postModeLabel${num}`);
+            const inputEl = document.getElementById(`directCommentInput${num}`);
+            const chName = state.streams[num].channelName || `${num}窓`;
+
+            if (postTargetMode[num] === 'chat') {
+                if (labelEl) labelEl.textContent = 'チャット';
+                if (inputEl) inputEl.placeholder = `${chName} のライブチャットへ送信...`;
+            } else {
+                if (labelEl) labelEl.textContent = '動画コメント';
+                if (inputEl) inputEl.placeholder = `${chName} の動画コメント欄へ投稿...`;
+            }
+        }
+
+        async function submitDirectCommentOrChat(num) {
+            const target = state.streams[num];
+            const inputEl = document.getElementById(`directCommentInput${num}`);
+            if (!inputEl) return;
+            const text = inputEl.value.trim();
+
+            if (!target.videoId) {
+                showToast(`${num}窓に動画・配信が読み込まれていません`, 'warning');
+                return;
+            }
+            if (!text) {
+                showToast('送信するコメントを入力してください', 'warning');
+                return;
+            }
+
+            const mode = postTargetMode[num] || 'chat';
+
+            // 1. OAuth 2.0 API トークンがある場合は YouTube Data API v3 で直接POST送信
+            if (oauthAccessToken) {
+                try {
+                    if (mode === 'chat') {
+                        if (!activeLiveChatIds[num]) {
+                            await fetchActiveLiveChatId(num, target.videoId);
+                        }
+                        if (activeLiveChatIds[num]) {
+                            const res = await fetch('https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet', {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${oauthAccessToken}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    snippet: {
+                                        liveChatId: activeLiveChatIds[num],
+                                        type: 'textMessageEvent',
+                                        textMessageDetails: { messageText: text }
+                                    }
+                                })
+                            });
+                            if (res.ok) {
+                                inputEl.value = '';
+                                showToast(`💬 ${target.channelName || num + '窓'} のライブチャットに送信しました！`, 'success');
+                                return;
+                            }
+                        }
+                    }
+
+                    // 動画への通常コメント投稿 (またはライブチャットIDがないアーカイブ動画の場合)
+                    const commentRes = await fetch('https://www.googleapis.com/youtube/v3/commentThreads?part=snippet', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${oauthAccessToken}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            snippet: {
+                                videoId: target.videoId,
+                                topLevelComment: {
+                                    snippet: { textOriginal: text }
+                                }
+                            }
+                        })
+                    });
+                    if (commentRes.ok) {
+                        inputEl.value = '';
+                        showToast(`📝 ${target.channelName || num + '窓'} の動画にコメントを投稿しました！`, 'success');
+                        return;
+                    }
+                } catch (_) {}
+            }
+
+            // 2. ブラウザセッション連携モード（OAuthトークンなし）の場合：
+            // 入力したコメントを即座にクリップボードへ自動コピーし、チャット欄またはコメント画面へスマート誘導
+            const tempArea = document.createElement('textarea');
+            tempArea.value = text;
+            document.body.appendChild(tempArea);
+            tempArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(tempArea);
+            inputEl.value = '';
+
+            if (mode === 'comment') {
+                window.open(`https://www.youtube.com/watch?v=${target.videoId}`, `yt_comment_${num}`, 'width=520,height=720');
+                showToast('📋 コメントをコピーして動画ページを開きました！そのまま貼り付けて投稿できます（API連携なら直接送信も可能）', 'info');
+            } else {
+                const chatIframe = document.querySelector(`#chatFrameBox${num} iframe`);
+                if (chatIframe) chatIframe.focus();
+                showToast('📋 メッセージをコピーしました！上のチャット入力欄に貼り付けてすぐ送信できます（OAuth連携ならワンタップ直接送信）', 'info');
+            }
+        }
+
+        function toggleDirectCommentBar() {
+            state.showDirectCommentBar = !state.showDirectCommentBar;
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+        }
+
+        // ==========================================
+        // 広告削除・自動スキップエンジン (Ad-Guard Pro)
+        // ==========================================
+        /*
+         * 【広告ガード (Ad-Guard) の仕組み】
+         * 1. 各プレイヤーの `getVideoData().video_id` と本来の `state.streams[num].videoId` を常時比較します。
+         *    YouTube埋め込みプレイヤーで広告（プリロール／ミッドロール）が再生されると、一時的に広告用の別 `video_id` に切り替わるか、
+         *    広告ストリームが挿入されます。
+         * 2. 広告を検知した瞬間：
+         *    - 広告の大音量が流れないよう即座に `mute()` します。
+         *    - `setPlaybackRate(16)` および `seekTo(duration)` を試行して広告を高速スキップします。
+         *    - 手動の「広告をスキップ」ボタンも押せるように、広告再生中だけその窓のUIブロッカーシールドを自動開放します。
+         * 3. さらに「🚫 広告カット」ボタンを押すと、現在の再生秒数を保持したまま `loadVideoById` でストリームを再キュ―し、
+         *    しつこい広告を瞬時にバイパスします。
+         */
+        function startAdGuardWatcher() {
+            if (adGuardIntervalId) clearInterval(adGuardIntervalId);
+            adGuardIntervalId = setInterval(() => {
+                if (!state.adGuard) return;
+                for (let num = 1; num <= state.windowCount; num++) {
+                    checkAndBlockAd(num);
+                }
+            }, 1200);
+        }
+
+        function checkAndBlockAd(num) {
+            if (!state.adGuard) return;
+            const p = players[num];
+            const target = state.streams[num];
+            const adBanner = document.getElementById(`adBanner${num}`);
+            const shield = document.getElementById(`uiShield${num}`);
+
+            if (!p || !playerReady[num] || !target.videoId) return;
+
+            try {
+                const vData = typeof p.getVideoData === 'function' ? p.getVideoData() : null;
+                const currentPlayingId = vData && vData.video_id ? vData.video_id : target.videoId;
+
+                // 本来の動画IDと異なるIDが再生されている場合は広告ストリームと判定
+                const isAdDetected = Boolean(currentPlayingId && target.videoId && currentPlayingId !== target.videoId);
+
+                if (isAdDetected) {
+                    adPlayingState[num] = true;
+                    if (adBanner) {
+                        adBanner.classList.remove('hidden');
+                        adBanner.classList.add('flex');
+                    }
+                    // 広告中は「広告をスキップ」ボタンをクリックできるようシールドを一時解除
+                    if (shield) shield.classList.add('hidden');
+
+                    // 1. 広告音声を即時ミュート
+                    if (typeof p.mute === 'function') p.mute();
+
+                    // 2. 倍速＆終端シークで広告スキップを試行
+                    if (typeof p.setPlaybackRate === 'function') {
+                        try { p.setPlaybackRate(16); } catch (_) {}
+                    }
+                    const adDur = typeof p.getDuration === 'function' ? p.getDuration() : 0;
+                    if (adDur > 0 && adDur < 300 && typeof p.seekTo === 'function') {
+                        p.seekTo(adDur, true);
+                    }
+                } else if (adPlayingState[num]) {
+                    // 広告が終了して本編に戻ったら元の音声状態・UIロック・等倍速度を復元
+                    adPlayingState[num] = false;
+                    if (adBanner) {
+                        adBanner.classList.add('hidden');
+                        adBanner.classList.remove('flex');
+                    }
+                    if (typeof p.setPlaybackRate === 'function') {
+                        try { p.setPlaybackRate(1.0); } catch (_) {}
+                    }
+                    updateUiLockDOM();
+                    applyExclusiveAudioToPlayers();
+                }
+            } catch (_) {}
+        }
+
+        // ワンタップ「🚫 広告カット」：現在の再生位置を維持したままクリーンに本編ストリームへ再接続して広告を除去
+        function skipAdSingle(num, notify = true) {
+            const p = players[num];
+            const target = state.streams[num];
+            if (!target.videoId) {
+                if (notify) showToast(`${num}窓に動画が設定されていません`, 'warning');
+                return;
+            }
+
+            userPaused[num] = false;
+            adPlayingState[num] = false;
+            const adBanner = document.getElementById(`adBanner${num}`);
+            if (adBanner) {
+                adBanner.classList.add('hidden');
+                adBanner.classList.remove('flex');
+            }
+
+            if (p && playerReady[num] && typeof p.loadVideoById === 'function') {
+                try {
+                    let resumeSec = 0;
+                    const vData = typeof p.getVideoData === 'function' ? p.getVideoData() : null;
+                    if (vData && vData.video_id === target.videoId && typeof p.getCurrentTime === 'function') {
+                        resumeSec = Math.max(0, p.getCurrentTime());
+                    }
+                    p.mute();
+                    p.loadVideoById({
+                        videoId: target.videoId,
+                        startSeconds: resumeSec > 5 ? resumeSec : undefined
+                    });
+                    setTimeout(() => {
+                        applyExclusiveAudioToPlayers();
+                        updateUiLockDOM();
+                    }, 350);
+                } catch (_) {
+                    reloadStreamSingle(num);
+                }
+            } else {
+                reloadStreamSingle(num);
+            }
+
+            if (notify) {
+                showToast(`🚫 ${target.channelName || num + '窓'} の広告をカットして本編へ再接続しました`, 'success');
+            }
+        }
+
+        function skipAdsAllStreams(notify = true) {
+            let count = 0;
+            for (let num = 1; num <= state.windowCount; num++) {
+                if (state.streams[num].videoId) {
+                    skipAdSingle(num, false);
+                    count++;
+                }
+            }
+            if (notify) {
+                if (count > 0) {
+                    showToast(`🚫 全${count}窓の広告カット＆本編クリーン同期を実行しました`, 'success');
+                } else {
+                    showToast('再生中のストリームがありません', 'warning');
+                }
+            }
+        }
+
+        function toggleAdGuard() {
+            state.adGuard = !state.adGuard;
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+            showToast(
+                state.adGuard
+                    ? '🛡️ 広告ガード（自動消音・自動スキップ）を【ON】にしました'
+                    : '広告ガードを【OFF】にしました',
+                'info'
+            );
+        }
+
+        function setEmbedHostMode(mode) {
+            if (!['youtube', 'nocookie'].includes(mode)) mode = 'youtube';
+            state.embedHost = mode;
+            updateAuthAndAdGuardDOM();
+            saveStateToStorage();
+
+            // 既存のプレイヤーを新しいホストで再生成
+            for (let num = 1; num <= state.windowCount; num++) {
+                if (state.streams[num].videoId) {
+                    if (players[num] && typeof players[num].destroy === 'function') {
+                        try { players[num].destroy(); } catch (_) {}
+                    }
+                    players[num] = null;
+                    playerReady[num] = false;
+                    activateStreamView(num, false);
+                }
+            }
+
+            showToast(
+                mode === 'youtube'
+                    ? '標準ホスト (youtube.com) に切り替えました（Premium広告オフ・ログイン連携に最適）'
+                    : '広告軽減ホスト (youtube-nocookie.com) に切り替えました',
+                'info'
+            );
+        }
+
+        function updateAuthAndAdGuardDOM() {
+            // 1. ヘッダーのログインボタン表示更新
+            const headerLabel = document.getElementById('headerUserLabel');
+            const headerAvatar = document.getElementById('headerUserAvatar');
+            const headerIcon = document.getElementById('headerUserIcon');
+            const modalName = document.getElementById('modalUserName');
+            const modalBadge = document.getElementById('modalAuthBadge');
+            const modalSub = document.getElementById('modalUserSubtext');
+            const modalAvatar = document.getElementById('modalUserAvatar');
+            const modalFallback = document.getElementById('modalUserFallbackIcon');
+            const btnLogout = document.getElementById('btnLogoutAccount');
+
+            if (state.authUser && state.authUser.loggedIn) {
+                const displayName = state.authUser.name || 'YouTube 連携済';
+                if (headerLabel) headerLabel.textContent = displayName;
+                if (modalName) modalName.textContent = displayName;
+
+                if (state.authUser.mode === 'oauth') {
+                    if (modalBadge) {
+                        modalBadge.textContent = 'OAuth API連携中';
+                        modalBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+                    }
+                    if (modalSub) modalSub.textContent = '下部バーから動画コメント・ライブチャットの直接送信が可能です';
+                } else {
+                    if (modalBadge) {
+                        modalBadge.textContent = 'セッション連携中';
+                        modalBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/40';
+                    }
+                    if (modalSub) modalSub.textContent = 'ブラウザのYouTubeログイン状態＆YouTube Premiumを全窓に同期しています';
+                }
+
+                if (state.authUser.avatar) {
+                    if (headerAvatar) {
+                        headerAvatar.src = state.authUser.avatar;
+                        headerAvatar.classList.remove('hidden');
+                    }
+                    if (headerIcon) headerIcon.classList.add('hidden');
+                    if (modalAvatar) {
+                        modalAvatar.src = state.authUser.avatar;
+                        modalAvatar.classList.remove('hidden');
+                    }
+                    if (modalFallback) modalFallback.classList.add('hidden');
+                } else {
+                    if (headerAvatar) headerAvatar.classList.add('hidden');
+                    if (headerIcon) {
+                        headerIcon.className = 'fa-solid fa-circle-check text-emerald-400';
+                        headerIcon.classList.remove('hidden');
+                    }
+                    if (modalAvatar) modalAvatar.classList.add('hidden');
+                    if (modalFallback) modalFallback.classList.remove('hidden');
+                }
+                if (btnLogout) btnLogout.classList.remove('hidden');
+            } else {
+                if (headerLabel) headerLabel.textContent = 'YouTubeログイン';
+                if (headerAvatar) headerAvatar.classList.add('hidden');
+                if (headerIcon) {
+                    headerIcon.className = 'fa-brands fa-youtube text-red-400';
+                    headerIcon.classList.remove('hidden');
+                }
+                if (modalName) modalName.textContent = '未ログイン（ゲスト状態）';
+                if (modalBadge) {
+                    modalBadge.textContent = '未連携';
+                    modalBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400 border border-zinc-700';
+                }
+                if (modalSub) modalSub.textContent = 'ログインするとチャット参加・コメント投稿・Premium広告オフが利用できます';
+                if (modalAvatar) modalAvatar.classList.add('hidden');
+                if (modalFallback) modalFallback.classList.remove('hidden');
+                if (btnLogout) btnLogout.classList.add('hidden');
+            }
+
+            // 2. 広告ガードボタン表示更新
+            const topAdBtn = document.getElementById('btnTopAdGuard');
+            const topAdText = document.getElementById('topAdGuardText');
+            const modalAdBtn = document.getElementById('modalBtnAdGuard');
+
+            if (state.adGuard) {
+                if (topAdBtn) topAdBtn.className = 'px-2 py-1 rounded-xl text-[11px] font-semibold flex items-center gap-1 border transition bg-emerald-600/15 text-emerald-300 border-emerald-500/40';
+                if (topAdText) topAdText.textContent = 'ON';
+                if (modalAdBtn) {
+                    modalAdBtn.textContent = 'ON (有効)';
+                    modalAdBtn.className = 'px-3 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white transition';
+                }
+            } else {
+                if (topAdBtn) topAdBtn.className = 'px-2 py-1 rounded-xl text-[11px] font-semibold flex items-center gap-1 border transition bg-zinc-900 text-zinc-400 border-zinc-800';
+                if (topAdText) topAdText.textContent = 'OFF';
+                if (modalAdBtn) {
+                    modalAdBtn.textContent = 'OFF (無効)';
+                    modalAdBtn.className = 'px-3 py-1 rounded-lg text-xs font-bold bg-zinc-800 text-zinc-400 transition';
+                }
+            }
+
+            // 3. 埋め込みホスト選択ボタン更新
+            const btnYt = document.getElementById('hostBtn-youtube');
+            const btnNc = document.getElementById('hostBtn-nocookie');
+            if (btnYt && btnNc) {
+                if (state.embedHost === 'nocookie') {
+                    btnNc.className = 'p-2.5 rounded-xl border border-emerald-500 bg-emerald-950/30 text-left transition';
+                    btnYt.className = 'p-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 text-left transition opacity-75 hover:opacity-100';
+                } else {
+                    btnYt.className = 'p-2.5 rounded-xl border border-red-500 bg-red-950/30 text-left transition';
+                    btnNc.className = 'p-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 text-left transition opacity-75 hover:opacity-100';
+                }
+            }
+
+            // 4. 下部コメント投稿バーの表示切替
+            const modalCommentBtn = document.getElementById('modalBtnCommentBar');
+            if (modalCommentBtn) {
+                modalCommentBtn.textContent = state.showDirectCommentBar ? '表示中' : '非表示';
+                modalCommentBtn.className = state.showDirectCommentBar
+                    ? 'px-3 py-1 rounded-lg bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 font-bold text-[11px]'
+                    : 'px-3 py-1 rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 font-bold text-[11px]';
+            }
+            for (let num = 1; num <= 4; num++) {
+                const bar = document.getElementById(`directPostBar${num}`);
+                if (bar) {
+                    bar.classList.toggle('hidden', !state.showDirectCommentBar);
+                }
+            }
         }
 
         // ==========================================
