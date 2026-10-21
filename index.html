@@ -65,9 +65,13 @@
             border: 0;
             display: block;
         }
-        /* UIブロッカー有効時はiframeへのポインタイベントを完全遮断（YouTube標準UIの出現とiOSのネイティブ全画面化を防止） */
+        /* UIブロッカー有効時はiframeへのポインタイベントを遮断（YouTube標準UIの出現とiOSのネイティブ全画面化を防止） */
         .ui-locked .video-iframe-target iframe {
             pointer-events: none !important;
+        }
+        /* 個別パネルのUIロック一時解除時はそのパネルのみ操作許可 */
+        .ui-locked .video-panel.temp-unlocked .video-iframe-target iframe {
+            pointer-events: auto !important;
         }
         /* ドラッグリサイズ中はすべてのiframeのポインタイベントを一時無効化 */
         body.is-resizing iframe {
@@ -77,52 +81,56 @@
             user-select: none !important;
             -webkit-user-select: none !important;
         }
-        /* タッチ＆マウス両対応のリサイズスプリッター */
-        .splitter-h {
-            width: 8px;
-            cursor: col-resize;
-            background: transparent;
-            position: relative;
-            z-index: 30;
-            flex-shrink: 0;
+        /* ゼロ・リロード絶対配置パネル（DOM移動によるiframe再読込を完全防止） */
+        .zero-reload-panel {
+            position: absolute;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: #18181b;
+            border: 1px solid rgba(63, 63, 70, 0.75);
+            box-sizing: border-box;
+            transition: opacity 0.12s ease;
+        }
+        .zero-reload-panel.panel-hidden {
+            visibility: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+            z-index: -1 !important;
+        }
+        /* スプリッター（境界線ドラッグハンドル） */
+        .stage-splitter {
+            position: absolute;
+            z-index: 35;
             display: flex;
             align-items: center;
             justify-content: center;
             touch-action: none;
+            background: transparent;
             transition: background-color 0.15s;
         }
-        .splitter-h:hover, .splitter-h:active {
+        .stage-splitter:hover, .stage-splitter:active {
             background: rgba(239, 68, 68, 0.45);
         }
-        .splitter-h::after {
+        .stage-splitter.splitter-col {
+            cursor: col-resize;
+        }
+        .stage-splitter.splitter-col::after {
             content: '';
             width: 2px;
-            height: 28px;
+            height: 30px;
             border-radius: 999px;
-            background: rgba(161, 161, 170, 0.4);
+            background: rgba(161, 161, 170, 0.45);
         }
-        .splitter-v {
-            height: 8px;
+        .stage-splitter.splitter-row {
             cursor: row-resize;
-            background: transparent;
-            position: relative;
-            z-index: 30;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            touch-action: none;
-            transition: background-color 0.15s;
         }
-        .splitter-v:hover, .splitter-v:active {
-            background: rgba(239, 68, 68, 0.45);
-        }
-        .splitter-v::after {
+        .stage-splitter.splitter-row::after {
             content: '';
             height: 2px;
-            width: 28px;
+            width: 30px;
             border-radius: 999px;
-            background: rgba(161, 161, 170, 0.4);
+            background: rgba(161, 161, 170, 0.45);
         }
         /* レンジスライダー */
         input[type=range] {
@@ -153,22 +161,22 @@
     <!-- トースト通知エリア -->
     <div id="toastContainer" class="fixed bottom-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-[90vw]"></div>
 
-    <!-- iPhone/iPad等で複数窓が停止している時にワンタップで全窓同時スタートできるフローティングバナー -->
+    <!-- iPhone/iPad等で初回再生待機中の窓がある時にワンタップで全窓同時スタートできるバナー -->
     <div id="iosUnlockBanner" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[90] hidden items-center gap-3 bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 text-white px-5 py-2.5 rounded-2xl shadow-2xl border border-white/20 backdrop-blur-md">
         <div class="flex items-center gap-2 text-xs sm:text-sm font-bold">
             <i class="fa-solid fa-circle-play text-lg animate-pulse"></i>
-            <span>停止中の窓があります（iPhone/iPad同時再生ロック解除）</span>
+            <span>再生待機中の窓があります（iPhone/iPad同時再生ロック解除）</span>
         </div>
         <button onclick="forcePlayAllStreams(true)" class="bg-white text-red-600 hover:bg-zinc-100 font-extrabold text-xs px-3.5 py-1.5 rounded-xl shadow transition shrink-0">
             全窓を一括再生
         </button>
-        <button onclick="document.getElementById('iosUnlockBanner').classList.add('hidden')" class="text-white/80 hover:text-white p-1">
+        <button onclick="dismissIosBanner()" class="text-white/80 hover:text-white p-1">
             <i class="fa-solid fa-xmark"></i>
         </button>
     </div>
 
     <!-- ==========================================
-         詳細レイアウト＆iOS/環境設定ドロワー (右側スライドパネル)
+         詳細レイアウト・ライブ追従調節ドロワー (右側スライドパネル)
     =========================================== -->
     <div id="layoutDrawerBackdrop" onclick="toggleLayoutDrawer(false)" class="fixed inset-0 bg-black/60 backdrop-blur-[2px] z-50 hidden transition-opacity"></div>
     <aside id="layoutDrawer" class="fixed top-0 right-0 h-full w-full max-w-md bg-zinc-900 border-l border-zinc-800 z-50 transform translate-x-full transition-transform duration-200 flex flex-col shadow-2xl">
@@ -176,7 +184,7 @@
         <div class="px-5 py-3.5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950/60">
             <div class="flex items-center gap-2">
                 <i class="fa-solid fa-sliders text-red-500"></i>
-                <h2 class="font-bold text-sm text-white">詳細レイアウト・iPhone/iPad同時再生設定</h2>
+                <h2 class="font-bold text-sm text-white">ライブ追従調節・詳細レイアウト設定</h2>
             </div>
             <button onclick="toggleLayoutDrawer(false)" class="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition">
                 <i class="fa-solid fa-xmark"></i>
@@ -186,19 +194,75 @@
         <!-- ドロワーコンテンツ -->
         <div class="flex-1 overflow-y-auto p-5 space-y-5 text-xs">
             
-            <!-- 1. iPhone / iPad 止まらない同時再生エンジン設定 -->
-            <div class="space-y-2.5 bg-gradient-to-br from-rose-950/40 to-zinc-950 p-3.5 rounded-xl border border-red-500/30">
+            <!-- 1. ライブ遅延の自動追従調節（頻繁な更新・暗転を防ぐ新エンジン） -->
+            <div class="space-y-3 bg-gradient-to-br from-emerald-950/35 to-zinc-950 p-3.5 rounded-xl border border-emerald-500/30">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-zinc-100 flex items-center gap-1.5">
+                        <i class="fa-solid fa-bolt text-amber-400"></i>
+                        ライブ遅延の自動追従モード（更新頻度の調節）
+                    </span>
+                    <button onclick="recalibrateAllLiveBaselines(true)" class="text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-0.5 rounded border border-zinc-700 transition" title="現在の再生位置をライブ基準位置として再設定します">
+                        基準リセット
+                    </button>
+                </div>
+
+                <p class="text-[11px] text-zinc-300 leading-relaxed">
+                    YouTubeライブ固有の標準バッファ（約10〜18秒）を自動除外し、<strong>本当に遅れた分（実遅延）だけ</strong>を判定します。「倍速追従」なら画面が暗転・再読込されずに滑らかに追いつきます。
+                </p>
+
+                <!-- 3つの追従モード選択 -->
+                <div class="grid grid-cols-3 gap-1.5 pt-0.5">
+                    <button onclick="setLiveSyncMode('rate')" id="drawerSyncMode-rate" class="p-2 rounded-xl border text-center transition flex flex-col items-center gap-0.5">
+                        <span class="font-bold text-[11px]">⚡ 倍速追従 (推奨)</span>
+                        <span class="text-[9px] opacity-80">1.25xで画面更新なし</span>
+                    </button>
+                    <button onclick="setLiveSyncMode('seek')" id="drawerSyncMode-seek" class="p-2 rounded-xl border text-center transition flex flex-col items-center gap-0.5">
+                        <span class="font-bold text-[11px]">⏭️ シーク追従</span>
+                        <span class="text-[9px] opacity-80">大遅延時のみジャンプ</span>
+                    </button>
+                    <button onclick="setLiveSyncMode('off')" id="drawerSyncMode-off" class="p-2 rounded-xl border text-center transition flex flex-col items-center gap-0.5">
+                        <span class="font-bold text-[11px]">⏸️ OFF (手動のみ)</span>
+                        <span class="text-[9px] opacity-80">自動で動かさない</span>
+                    </button>
+                </div>
+
+                <!-- 許容遅延しきい値スライダー (10秒〜60秒) -->
+                <div class="space-y-1 pt-1">
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-zinc-300">追従を開始する実遅延しきい値:</span>
+                        <span id="liveThresholdLabel" class="font-mono text-emerald-400 font-bold">20秒以上遅れたら追従</span>
+                    </div>
+                    <input type="range" id="liveThresholdSlider" min="10" max="60" step="5" value="20" oninput="updateLiveThreshold(this.value)" class="w-full">
+                    <div class="flex justify-between text-[9px] text-zinc-500">
+                        <span>10秒 (敏感)</span>
+                        <span>20秒 (標準・推奨)</span>
+                        <span>60秒 (ゆったり)</span>
+                    </div>
+                </div>
+
+                <!-- シーク追従時の最小クールダウン間隔 (30秒〜180秒) -->
+                <div class="space-y-1 pt-1 border-t border-zinc-800/70">
+                    <div class="flex justify-between text-[11px]">
+                        <span class="text-zinc-300">シーク追従の最小間隔 (連続更新防止):</span>
+                        <span id="liveCooldownLabel" class="font-mono text-amber-400 font-bold">最低 60秒 間隔</span>
+                    </div>
+                    <input type="range" id="liveCooldownSlider" min="30" max="180" step="15" value="60" oninput="updateLiveCooldown(this.value)" class="w-full">
+                </div>
+            </div>
+
+            <!-- 2. iPhone / iPad 止まらない同時再生エンジン設定 -->
+            <div class="space-y-2.5 bg-gradient-to-br from-rose-950/35 to-zinc-950 p-3.5 rounded-xl border border-red-500/30">
                 <div class="flex items-center justify-between">
                     <span class="font-bold text-zinc-100 flex items-center gap-1.5">
                         <i class="fa-brands fa-apple text-sm text-red-400"></i>
-                        iPhone / iPad 複数窓・自動復帰モード (KeepAlive)
+                        iPhone / iPad 自動復帰モード (KeepAlive)
                     </span>
                     <button onclick="toggleIosKeepAlive()" id="btnIosKeepAlive" class="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 text-white transition">
                         ON
                     </button>
                 </div>
                 <p class="text-[11px] text-zinc-300 leading-relaxed">
-                    iOS/iPadOSの仕様で2窓以上を再生した際に片方が自動停止される現象を防ぐため、<strong>「音声を出す1窓以外を先行ミュート」＋「停止検知時に0.5秒以内で自動再開」</strong>を行います。
+                    iOS/iPadOSで他窓の操作時に片方が自動停止された場合のみ検知して自動再開します（再生中のストリームには一切干渉しないため再読込は起きません）。
                 </p>
                 <div class="pt-1 flex gap-2">
                     <button onclick="forcePlayAllStreams(true)" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded-lg flex items-center justify-center gap-1.5 shadow transition">
@@ -208,7 +272,7 @@
                 </div>
             </div>
 
-            <!-- 2. マイ・レイアウトプリセット保存・読込 (localStorage) -->
+            <!-- 3. マイ・レイアウトプリセット保存・読込 (localStorage) -->
             <div class="space-y-2.5 bg-zinc-950/70 p-3.5 rounded-xl border border-zinc-800/90">
                 <div class="flex items-center justify-between">
                     <span class="font-bold text-zinc-200 flex items-center gap-1.5">
@@ -242,11 +306,11 @@
                 </div>
             </div>
 
-            <!-- 3. 全体構成モード選択 (6種類) -->
+            <!-- 4. 全体構成モード選択 (6種類・ゼロリロード切替) -->
             <div class="space-y-2">
                 <label class="font-bold text-zinc-200 flex items-center gap-1.5">
                     <i class="fa-solid fa-table-columns text-red-400"></i>
-                    全体レイアウトモード（2窓・3窓・4窓対応）
+                    全体レイアウトモード（切替時も動画は再読込されません）
                 </label>
                 <div class="grid grid-cols-1 gap-1.5">
                     <button onclick="setLayout('split-columns')" id="drawer-layout-split-columns" class="drawer-layout-btn flex items-center justify-between p-2.5 rounded-xl border border-zinc-800 bg-zinc-950 hover:border-zinc-700 text-left transition">
@@ -262,8 +326,8 @@
                         <div class="flex items-center gap-2.5">
                             <i class="fa-solid fa-border-all text-base text-indigo-400 w-5 text-center"></i>
                             <div>
-                                <div class="font-semibold text-zinc-100">2×2 グリッド分割（3窓・4窓やタブレットに最適）</div>
-                                <div class="text-[10px] text-zinc-400">画面を上下左右の4マス（または3マス）に均等分割して映像とチャットを表示</div>
+                                <div class="font-semibold text-zinc-100">2×2 グリッド分割（3窓・4窓やiPadに最適）</div>
+                                <div class="text-[10px] text-zinc-400">画面を上下左右の4マスに分割して各映像とチャットを表示</div>
                             </div>
                         </div>
                     </button>
@@ -271,8 +335,8 @@
                         <div class="flex items-center gap-2.5">
                             <i class="fa-solid fa-folder-tree text-base text-pink-400 w-5 text-center"></i>
                             <div>
-                                <div class="font-semibold text-zinc-100">映像グリッド ＋ タブ切替チャット（iPhone/iPad・多窓推奨）</div>
-                                <div class="text-[10px] text-zinc-400">全映像を同時表示しつつ、チャットは1つの広い枠でチャンネルタブを切り替えて閲覧</div>
+                                <div class="font-semibold text-zinc-100">映像グリッド ＋ タブ切替チャット（iPhone/多窓推奨）</div>
+                                <div class="text-[10px] text-zinc-400">全映像を大きく表示し、チャットは1つの広い枠でタブを切り替えて閲覧</div>
                             </div>
                         </div>
                     </button>
@@ -306,7 +370,7 @@
                 </div>
             </div>
 
-            <!-- 4. 各窓ごとのチャット配置方向＆透過オーバーレイ設定 (1〜4窓) -->
+            <!-- 5. 各窓ごとのチャット配置方向＆透過オーバーレイ設定 (1〜4窓) -->
             <div class="space-y-3 bg-zinc-950/70 p-3.5 rounded-xl border border-zinc-800/90">
                 <div class="font-bold text-zinc-200 flex items-center justify-between">
                     <span class="flex items-center gap-1.5">
@@ -328,18 +392,18 @@
                 <div class="flex items-center justify-between pt-2 border-t border-zinc-800/80">
                     <span class="text-zinc-400 text-[11px]">透過重ね時のチャット不透明度:</span>
                     <div class="flex items-center gap-2">
-                        <input type="range" id="overlayOpacitySlider" min="25" max="95" value="75" oninput="updateOverlayOpacity(this.value)" class="w-24">
-                        <span id="overlayOpacityLabel" class="font-mono text-zinc-300 w-9 text-right">75%</span>
+                        <input type="range" id="overlayOpacitySlider" min="25" max="95" value="78" oninput="updateOverlayOpacity(this.value)" class="w-24">
+                        <span id="overlayOpacityLabel" class="font-mono text-zinc-300 w-9 text-right">78%</span>
                     </div>
                 </div>
             </div>
 
-            <!-- 5. 画面比率・映像/チャット比率のスライダー調整 -->
+            <!-- 6. 画面比率・映像/チャット比率のスライダー調整 -->
             <div class="space-y-3 bg-zinc-950/70 p-3.5 rounded-xl border border-zinc-800/90">
                 <div class="font-bold text-zinc-200 flex items-center justify-between">
                     <span class="flex items-center gap-1.5">
                         <i class="fa-solid fa-arrows-left-right-to-line text-emerald-400"></i>
-                        比率の微調整（指やマウスで境界線ドラッグも可能）
+                        比率の微調整（画面上の境界線ドラッグも可能）
                     </span>
                     <button onclick="resetAllRatios()" class="text-[10px] text-zinc-400 hover:text-white underline">比率リセット</button>
                 </div>
@@ -347,10 +411,10 @@
                 <!-- メイン分割比率 -->
                 <div class="space-y-1">
                     <div class="flex justify-between text-[11px]">
-                        <span class="text-zinc-400">メイン左右（または上下）分割比率</span>
+                        <span class="text-zinc-400">メイン分割比率（左右または上下）</span>
                         <span id="drawerMainRatioLabel" class="font-mono text-red-400 font-semibold">50% : 50%</span>
                     </div>
-                    <input type="range" id="drawerMainRatioSlider" min="15" max="85" value="50" oninput="updateSplitRatio(this.value)" class="w-full">
+                    <input type="range" id="drawerMainRatioSlider" min="20" max="80" value="50" oninput="updateSplitRatio(this.value)" class="w-full">
                 </div>
 
                 <!-- 映像 : チャット比率（一括調整） -->
@@ -359,39 +423,21 @@
                         <span class="text-zinc-400">各窓の 映像 : チャット 比率（一括）</span>
                         <span id="drawerVcRatioLabelAll" class="font-mono text-zinc-300">映像 58% : チャット 42%</span>
                     </div>
-                    <input type="range" id="drawerVcRatioSliderAll" min="20" max="85" value="58" oninput="updateAllVideoChatRatios(this.value)" class="w-full">
+                    <input type="range" id="drawerVcRatioSliderAll" min="25" max="85" value="58" oninput="updateAllVideoChatRatios(this.value)" class="w-full">
                 </div>
             </div>
 
-            <!-- 6. ライブ遅延自動追従・パネル外観・ドメイン設定 -->
+            <!-- 7. パネル外観・チャットドメイン設定 -->
             <div class="space-y-3 bg-zinc-950/70 p-3.5 rounded-xl border border-zinc-800/90">
                 <div class="font-bold text-zinc-200 flex items-center gap-1.5">
-                    <i class="fa-solid fa-bolt text-amber-400"></i>
-                    ライブ遅延自動追従・パネル表示設定
+                    <i class="fa-solid fa-display text-sky-400"></i>
+                    パネル表示・チャットドメイン設定
                 </div>
 
                 <div class="flex items-center justify-between">
-                    <span class="text-zinc-300">自動ライブ追従の遅延しきい値:</span>
-                    <select id="liveThresholdSelect" onchange="updateLiveThreshold(this.value)" class="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-white">
-                        <option value="3">3秒以上遅れたら自動追従</option>
-                        <option value="5" selected>5秒以上遅れたら自動追従（推奨）</option>
-                        <option value="8">8秒以上遅れたら自動追従</option>
-                        <option value="12">12秒以上遅れたら自動追従</option>
-                    </select>
-                </div>
-
-                <div class="flex items-center justify-between">
-                    <span class="text-zinc-300">遅延検知時の追いつき方式:</span>
-                    <select id="liveCatchupModeSelect" onchange="updateLiveCatchupMode(this.value)" class="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs text-white">
-                        <option value="seek" selected>最新ライブ位置へ即座にシーク</option>
-                        <option value="speed">1.5倍速で追いつく＋大遅延時シーク</option>
-                    </select>
-                </div>
-
-                <div class="flex items-center justify-between pt-1 border-t border-zinc-800/70">
                     <div>
-                        <div class="text-zinc-300">各パネルのヘッダーバーを表示</div>
-                        <div class="text-[10px] text-zinc-500">OFFにすると映像エリアがさらに広がります</div>
+                        <div class="text-zinc-300">各映像パネルの上部ヘッダーバーを表示</div>
+                        <div class="text-[10px] text-zinc-500">OFFにすると映像表示領域がさらに広がります</div>
                     </div>
                     <button onclick="togglePanelHeaders()" id="btnTogglePanelHeaders" class="px-3 py-1 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 font-semibold">ON</button>
                 </div>
@@ -438,7 +484,7 @@
     <!-- ==========================================
          上部UI非表示（没入モード）時のフローティングミニバー
     =========================================== -->
-    <div id="floatingMiniBar" class="fixed top-2 right-2 z-40 hidden items-center gap-1.5 bg-zinc-900/90 hover:bg-zinc-900 text-zinc-200 border border-zinc-700/80 px-2.5 py-1.5 rounded-full text-xs shadow-2xl backdrop-blur-md opacity-75 hover:opacity-100 transition-all duration-200 max-w-[96vw] overflow-x-auto">
+    <div id="floatingMiniBar" class="fixed top-2 right-2 z-40 hidden items-center gap-1.5 bg-zinc-900/90 hover:bg-zinc-900 text-zinc-200 border border-zinc-700/80 px-2.5 py-1.5 rounded-full text-xs shadow-2xl backdrop-blur-md opacity-80 hover:opacity-100 transition-all duration-200 max-w-[96vw] overflow-x-auto">
         <!-- ミニバー: 窓数切替 -->
         <div class="flex items-center bg-zinc-950 rounded-full p-0.5 border border-zinc-800 shrink-0">
             <button onclick="setWindowCount(2)" id="miniWinBtn2" class="px-2 py-0.5 rounded-full text-[10px] font-bold">2窓</button>
@@ -466,10 +512,10 @@
             </button>
         </div>
 
-        <!-- ミニバー: 全窓一括再生（iPhone/iPad用） -->
-        <button onclick="forcePlayAllStreams(true)" class="px-2.5 py-1 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1 shrink-0 transition" title="止まった窓を一括再生">
-            <i class="fa-solid fa-play"></i>
-            <span class="hidden sm:inline">一括再生</span>
+        <!-- ミニバー: 手動ライブ同期 -->
+        <button onclick="syncAllToLiveEdge(true)" class="px-2.5 py-1 rounded-full bg-zinc-800 hover:bg-amber-600 text-amber-300 hover:text-white text-[10px] font-bold flex items-center gap-1 shrink-0 transition" title="今すぐ全窓を最新ライブ位置へ同期">
+            <i class="fa-solid fa-bolt"></i>
+            <span class="hidden sm:inline">LIVE同期</span>
         </button>
 
         <!-- ミニバー: 上部UIを再表示 -->
@@ -485,9 +531,8 @@
     <header id="topBar" class="bg-zinc-900/95 border-b border-zinc-800 px-2.5 sm:px-3 py-2 transition-all duration-200 z-30 shrink-0">
         <div class="max-w-[1920px] mx-auto flex flex-col gap-2">
             
-            <!-- 上段: ロゴ ＆ 2窓/3窓/4窓切替 ＆ URL入力エリア開閉 ＆ アクション群 -->
+            <!-- 上段: ロゴ ＆ 2窓/3窓/4窓切替 ＆ 一括再生 ＆ アクション群 -->
             <div class="flex flex-wrap items-center justify-between gap-2">
-                <!-- ロゴ & 窓数セレクター (デフォルト2窓 / 最大4窓) -->
                 <div class="flex items-center gap-2">
                     <div class="flex items-center gap-1.5">
                         <div class="w-7 h-7 rounded-xl bg-gradient-to-br from-red-600 to-rose-700 flex items-center justify-center shadow-lg shadow-red-950/50">
@@ -523,7 +568,7 @@
                 <div class="flex items-center gap-1.5 flex-wrap">
                     <button onclick="toggleUrlInputsBar()" id="btnToggleUrlBar" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1 rounded-xl text-xs font-medium border border-zinc-700/80 transition flex items-center gap-1" title="URL入力欄の表示/折りたたみ">
                         <i class="fa-solid fa-link text-sky-400"></i>
-                        <span class="hidden sm:inline">URL入力欄</span>
+                        <span class="hidden sm:inline">URL欄</span>
                         <i id="urlBarChevron" class="fa-solid fa-chevron-up text-[10px] text-zinc-400"></i>
                     </button>
                     <button onclick="loadDemoStreams()" title="現在の窓数に合わせてサンプルの24時間ライブ配信を一括読込" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-2.5 py-1 rounded-xl text-xs font-medium border border-zinc-700/80 transition flex items-center gap-1">
@@ -536,7 +581,7 @@
                     </button>
                     <button onclick="toggleLayoutDrawer(true)" class="bg-zinc-800 hover:bg-zinc-700 text-white px-2.5 py-1 rounded-xl text-xs font-semibold border border-zinc-700 transition flex items-center gap-1">
                         <i class="fa-solid fa-sliders text-red-400"></i>
-                        <span>詳細設定</span>
+                        <span>追従・詳細設定</span>
                     </button>
                     <button onclick="toggleHeaderCollapse(true)" title="上部UIを非表示にする (ショートカット: H)" class="bg-zinc-800 hover:bg-red-600 text-zinc-300 hover:text-white px-2.5 py-1 rounded-xl text-xs font-medium border border-zinc-700/80 transition flex items-center gap-1">
                         <i class="fa-solid fa-eye-slash"></i>
@@ -549,7 +594,7 @@
             <div id="urlInputsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-1.5 transition-all">
                 <!-- Stream 1 入力 -->
                 <div id="urlInputRow1" class="flex items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-red-500 rounded-xl overflow-hidden transition">
-                    <div class="px-2 py-1 bg-red-600/15 text-red-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[130px]">
+                    <div class="px-2 py-1 bg-red-600/15 text-red-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[135px]">
                         <img id="inputAvatar1" src="" alt="" class="w-4 h-4 rounded-full object-cover border border-red-400/50 hidden shrink-0">
                         <span id="inputDot1" class="w-2 h-2 rounded-full bg-red-500 shrink-0"></span>
                         <span class="ch-name-label-1 truncate text-[11px]">1窓</span>
@@ -564,7 +609,7 @@
 
                 <!-- Stream 2 入力 -->
                 <div id="urlInputRow2" class="flex items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-sky-500 rounded-xl overflow-hidden transition">
-                    <div class="px-2 py-1 bg-sky-600/15 text-sky-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[130px]">
+                    <div class="px-2 py-1 bg-sky-600/15 text-sky-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[135px]">
                         <img id="inputAvatar2" src="" alt="" class="w-4 h-4 rounded-full object-cover border border-sky-400/50 hidden shrink-0">
                         <span id="inputDot2" class="w-2 h-2 rounded-full bg-sky-400 shrink-0"></span>
                         <span class="ch-name-label-2 truncate text-[11px]">2窓</span>
@@ -577,9 +622,9 @@
                     <button onclick="loadStream(2)" class="bg-zinc-800 hover:bg-sky-600 text-zinc-200 hover:text-white px-2.5 py-1 text-xs font-semibold transition shrink-0">反映</button>
                 </div>
 
-                <!-- Stream 3 入力 (3窓・4窓選択時に表示) -->
+                <!-- Stream 3 入力 -->
                 <div id="urlInputRow3" class="hidden items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-emerald-500 rounded-xl overflow-hidden transition">
-                    <div class="px-2 py-1 bg-emerald-600/15 text-emerald-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[130px]">
+                    <div class="px-2 py-1 bg-emerald-600/15 text-emerald-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[135px]">
                         <img id="inputAvatar3" src="" alt="" class="w-4 h-4 rounded-full object-cover border border-emerald-400/50 hidden shrink-0">
                         <span id="inputDot3" class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
                         <span class="ch-name-label-3 truncate text-[11px]">3窓</span>
@@ -592,9 +637,9 @@
                     <button onclick="loadStream(3)" class="bg-zinc-800 hover:bg-emerald-600 text-zinc-200 hover:text-white px-2.5 py-1 text-xs font-semibold transition shrink-0">反映</button>
                 </div>
 
-                <!-- Stream 4 入力 (4窓選択時に表示) -->
+                <!-- Stream 4 入力 -->
                 <div id="urlInputRow4" class="hidden items-center bg-zinc-950 border border-zinc-700/80 focus-within:border-amber-500 rounded-xl overflow-hidden transition">
-                    <div class="px-2 py-1 bg-amber-600/15 text-amber-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[130px]">
+                    <div class="px-2 py-1 bg-amber-600/15 text-amber-300 font-bold text-xs border-r border-zinc-800 flex items-center gap-1.5 shrink-0 max-w-[135px]">
                         <img id="inputAvatar4" src="" alt="" class="w-4 h-4 rounded-full object-cover border border-amber-400/50 hidden shrink-0">
                         <span id="inputDot4" class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
                         <span class="ch-name-label-4 truncate text-[11px]">4窓</span>
@@ -608,70 +653,63 @@
                 </div>
             </div>
 
-            <!-- 下段: 排他音声スイッチャー(1〜4窓) ＆ ライブ自動追従 ＆ UIロック ＆ レイアウト切替 -->
+            <!-- 下段: 排他音声スイッチャー(1〜4窓) ＆ ライブ追従モード切替 ＆ UIロック ＆ レイアウト切替 -->
             <div class="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-zinc-800/80 text-xs">
                 
-                <!-- 1. 排他オーディオスイッチャー（iOS/iPadでも他の窓が止まらない先行ミュート方式） -->
+                <!-- 1. 排他オーディオスイッチャー（先行ミュート方式） -->
                 <div class="flex items-center gap-1 flex-wrap bg-zinc-950/90 px-2 py-1 rounded-xl border border-zinc-800">
                     <span class="text-[11px] text-zinc-400 font-semibold flex items-center gap-1 mr-0.5">
                         <i class="fa-solid fa-headphones text-red-400"></i>
-                        <span class="hidden sm:inline">音声選択:</span>
+                        <span class="hidden sm:inline">音声:</span>
                     </span>
 
-                    <!-- 1窓の音声のみON -->
                     <button onclick="setActiveAudio(1)" id="audioBtn1" class="px-2 py-1 rounded-lg font-semibold flex items-center gap-1 transition text-[11px]">
                         <img id="audioAvatar1" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
                         <i id="audioIcon1" class="fa-solid fa-volume-high"></i>
                         <span class="ch-name-label-1 max-w-[85px] truncate">1窓</span>
                     </button>
 
-                    <!-- 2窓の音声のみON -->
                     <button onclick="setActiveAudio(2)" id="audioBtn2" class="px-2 py-1 rounded-lg font-semibold flex items-center gap-1 transition text-[11px]">
                         <img id="audioAvatar2" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
                         <i id="audioIcon2" class="fa-solid fa-volume-xmark"></i>
                         <span class="ch-name-label-2 max-w-[85px] truncate">2窓</span>
                     </button>
 
-                    <!-- 3窓の音声のみON -->
                     <button onclick="setActiveAudio(3)" id="audioBtn3" class="hidden px-2 py-1 rounded-lg font-semibold items-center gap-1 transition text-[11px]">
                         <img id="audioAvatar3" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
                         <i id="audioIcon3" class="fa-solid fa-volume-xmark"></i>
                         <span class="ch-name-label-3 max-w-[85px] truncate">3窓</span>
                     </button>
 
-                    <!-- 4窓の音声のみON -->
                     <button onclick="setActiveAudio(4)" id="audioBtn4" class="hidden px-2 py-1 rounded-lg font-semibold items-center gap-1 transition text-[11px]">
                         <img id="audioAvatar4" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
                         <i id="audioIcon4" class="fa-solid fa-volume-xmark"></i>
                         <span class="ch-name-label-4 max-w-[85px] truncate">4窓</span>
                     </button>
 
-                    <!-- 全ミュート / 全音声ON(PC用) -->
-                    <button onclick="setActiveAudio(0)" id="audioBtn0" title="全窓ミュート（iPhone/iPadで最も安定して全窓再生できます）" class="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-[11px] transition">
+                    <button onclick="setActiveAudio(0)" id="audioBtn0" title="全窓ミュート" class="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-[11px] transition">
                         <i class="fa-solid fa-volume-xmark"></i>
                     </button>
-                    <button onclick="setActiveAudio(99)" id="audioBtn99" title="全窓の音声を同時再生（※PC向け。iPhone/iPadではOS制限により1窓のみ推奨）" class="hidden md:inline-block px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-[10px] font-medium transition">
+                    <button onclick="setActiveAudio(99)" id="audioBtn99" title="全窓の音声を同時再生（※PC向け）" class="hidden md:inline-block px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-[10px] font-medium transition">
                         全ON
                     </button>
 
-                    <!-- 音量スライダー -->
                     <div class="hidden lg:flex items-center gap-1.5 pl-1.5 border-l border-zinc-800">
                         <input type="range" id="masterVolumeSlider" min="0" max="100" value="80" oninput="updateMasterVolume(this.value)" class="w-14" title="選択中の配信の音量">
                         <span id="masterVolumeLabel" class="font-mono text-[10px] text-zinc-400 w-7">80%</span>
                     </div>
                 </div>
 
-                <!-- 2. iOS自動復帰 ＆ ライブ自動追従 ＆ 動画UIブロッカー -->
+                <!-- 2. ライブ追従モード切替（倍速追従 / シーク / OFF） ＆ 動画UIブロッカー -->
                 <div class="flex items-center gap-1 flex-wrap">
-                    <!-- 自動ライブ追従トグル -->
                     <div class="flex items-center bg-zinc-950 rounded-xl p-0.5 border border-zinc-800">
-                        <button onclick="toggleAutoLiveSync()" id="btnAutoLiveSync" class="px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition" title="配信が遅れていたら自動で最新のライブ位置へ追いつく機能のON/OFF">
-                            <span id="liveSyncPulse" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                            <span>自動追従:<strong id="autoLiveSyncStateText">ON</strong></span>
+                        <button onclick="cycleLiveSyncMode()" id="btnAutoLiveSync" class="px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition" title="クリックで追従モード切替: 倍速追従(画面更新なし) ➔ シーク追従(大遅延のみ) ➔ OFF(手動のみ)">
+                            <span id="liveSyncPulse" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            <span>ライブ追従:<strong id="autoLiveSyncStateText">倍速(推奨)</strong></span>
                         </button>
-                        <button onclick="syncAllToLiveEdge(true)" class="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-red-600 text-zinc-300 hover:text-white text-[11px] font-medium flex items-center gap-1 ml-0.5 transition" title="今すぐ全配信を最新のライブ位置へシーク">
+                        <button onclick="syncAllToLiveEdge(true)" class="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-red-600 text-zinc-300 hover:text-white text-[11px] font-medium flex items-center gap-1 ml-0.5 transition" title="今すぐ全配信を最新のライブ位置へ手動同期">
                             <i class="fa-solid fa-bolt text-amber-400"></i>
-                            <span class="hidden sm:inline">LIVE同期</span>
+                            <span class="hidden sm:inline">今すぐ同期</span>
                         </button>
                     </div>
 
@@ -717,52 +755,51 @@
     </header>
 
     <!-- ==========================================
-         メインワークスペース (2窓 / 3窓 / 4窓 ＆ 全レイアウト対応)
+         メインワークスペース (ゼロ・リロード絶対座標ステージ)
+         ※映像パネル1〜4とチャットパネル1〜4は常にこの直下に固定され、DOM移動による再読込が一切発生しません
     =========================================== -->
-    <main id="workspace" class="flex-1 w-full h-full overflow-hidden bg-zinc-950 flex relative" style="padding: 6px;">
-        
-        <!-- 標準・グリッドレイアウトルート -->
-        <div id="layoutRoot" class="w-full h-full flex min-w-0 min-h-0 relative">
-            <!-- JS初期化時に Stream 1 〜 Stream 4 のユニットとスプリッターをマウント -->
-        </div>
-
-        <!-- ドック型レイアウト（上下分割 / 右チャット集約 / タブ切替チャット）用コンテナ -->
-        <div id="customDockContainer" class="hidden w-full h-full min-w-0 min-h-0 relative">
-            <div id="dockPrimaryArea" class="flex min-w-0 min-h-0 relative overflow-hidden" style="flex: 60 1 0%;"></div>
-            <div id="dockMainSplitter" onpointerdown="startPointerResize(event, 'main')" class="splitter-h"></div>
-            <div id="dockSecondaryArea" class="flex flex-col min-w-0 min-h-0 relative overflow-hidden" style="flex: 40 1 0%;">
-                <!-- タブ切替チャットモード時のタブヘッダーバー -->
-                <div id="chatTabsHeaderBar" class="hidden h-8 bg-zinc-900 border-b border-zinc-800 px-2 items-center gap-1 shrink-0 overflow-x-auto">
-                    <button onclick="selectActiveChatTab(1)" id="chatTabBtn1" class="px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shrink-0">
+    <main id="workspace" class="flex-1 w-full h-full overflow-hidden bg-zinc-950 relative">
+        <div id="workspaceStage" class="w-full h-full relative overflow-hidden">
+            <!-- タブ切替チャットモード専用のタブヘッダーバー -->
+            <div id="chatTabsHeaderBar" class="zero-reload-panel panel-hidden bg-zinc-900 border-b border-zinc-800 px-2 flex-row items-center justify-between z-30">
+                <div class="flex items-center gap-1 overflow-x-auto py-1">
+                    <button onclick="selectActiveChatTab(1, true)" id="chatTabBtn1" class="px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shrink-0">
                         <img id="tabAvatar1" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden">
                         <span class="ch-name-label-1 max-w-[110px] truncate">1窓</span>
                     </button>
-                    <button onclick="selectActiveChatTab(2)" id="chatTabBtn2" class="px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shrink-0">
+                    <button onclick="selectActiveChatTab(2, true)" id="chatTabBtn2" class="px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition shrink-0">
                         <img id="tabAvatar2" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden">
                         <span class="ch-name-label-2 max-w-[110px] truncate">2窓</span>
                     </button>
-                    <button onclick="selectActiveChatTab(3)" id="chatTabBtn3" class="hidden px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0">
+                    <button onclick="selectActiveChatTab(3, true)" id="chatTabBtn3" class="hidden px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0">
                         <img id="tabAvatar3" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden">
                         <span class="ch-name-label-3 max-w-[110px] truncate">3窓</span>
                     </button>
-                    <button onclick="selectActiveChatTab(4)" id="chatTabBtn4" class="hidden px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0">
+                    <button onclick="selectActiveChatTab(4, true)" id="chatTabBtn4" class="hidden px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0">
                         <img id="tabAvatar4" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden">
                         <span class="ch-name-label-4 max-w-[110px] truncate">4窓</span>
                     </button>
                 </div>
-                <!-- ドック内のチャット格納領域 -->
-                <div id="dockChatContent" class="flex-1 flex min-w-0 min-h-0 relative overflow-hidden"></div>
+                <span class="text-[10px] text-zinc-500 hidden sm:inline shrink-0 pr-1">タブ切替でチャット再読込なし</span>
             </div>
-        </div>
 
+            <!-- ドラッグリサイズ用スプリッター群 -->
+            <div id="mainSplitter" onpointerdown="startPointerResize(event, 'main')" class="stage-splitter splitter-col hidden"></div>
+            <div id="vcSplitter1" onpointerdown="startPointerResize(event, 'vc1')" class="stage-splitter splitter-row hidden"></div>
+            <div id="vcSplitter2" onpointerdown="startPointerResize(event, 'vc2')" class="stage-splitter splitter-row hidden"></div>
+            <div id="vcSplitter3" onpointerdown="startPointerResize(event, 'vc3')" class="stage-splitter splitter-row hidden"></div>
+            <div id="vcSplitter4" onpointerdown="startPointerResize(event, 'vc4')" class="stage-splitter splitter-row hidden"></div>
+
+            <!-- JS初期化時に #videoPanel1..4 と #chatPanel1..4 を一度だけここに生成（以後DOM移動なし） -->
+        </div>
     </main>
 
     <script>
         // ==========================================
-        // 永続化ストレージキー & 定数・デフォルト状態
+        // 永続化ストレージキー (v4: ライブ追従の過剰シーク防止・安全デフォルト移行)
         // ==========================================
-        const STORAGE_KEY = 'dualtube_studio_pro_v3_state';
-        const PRESETS_KEY = 'dualtube_studio_pro_v3_presets';
+        const STORAGE_KEY = 'yt_multiview_state_v4';
+        const PRESETS_KEY = 'yt_multiview_presets_v4';
 
         // 各窓のテーマカラー定義 (1〜4窓)
         const STREAM_THEMES = {
@@ -780,7 +817,7 @@
             4: 'https://www.youtube.com/watch?v=rUxyKA_-grg'  // Lofi Sleep / Chill
         };
 
-        function createEmptyStreamObj(num) {
+        function createEmptyStreamObj() {
             return {
                 url: '',
                 videoId: null,
@@ -788,30 +825,30 @@
                 streamTitle: '',
                 avatarUrl: '',
                 chatPos: 'bottom', // 'bottom' | 'right' | 'left' | 'overlay' | 'hidden'
-                vcRatio: 58        // 各窓内の映像:チャット比率 (20〜85)
+                vcRatio: 58        // 各窓内の映像:チャット比率 (25〜85)
             };
         }
 
         const DEFAULT_STATE = {
             windowCount: 2,          // デフォルトは2窓 (2 / 3 / 4)
             streams: {
-                1: createEmptyStreamObj(1),
-                2: createEmptyStreamObj(2),
-                3: createEmptyStreamObj(3),
-                4: createEmptyStreamObj(4)
+                1: createEmptyStreamObj(),
+                2: createEmptyStreamObj(),
+                3: createEmptyStreamObj(),
+                4: createEmptyStreamObj()
             },
             layout: 'split-columns', // 'split-columns' | 'grid-2x2' | 'chat-tabbed' | 'video-top-chat-bottom' | 'side-chat-dock' | 'videos-only'
-            splitRatio: 50,          // メイン分割比率 (15〜85)
-            overlayOpacity: 75,      // 透過オーバーレイ時の不透明度 (25〜95)
+            splitRatio: 50,          // メイン分割比率 (20〜80)
+            overlayOpacity: 78,      // 透過オーバーレイ時の不透明度 (25〜95)
             activeChatTab: 1,        // 'chat-tabbed' モードで表示中のチャット番号 (1〜4)
             activeAudio: 1,          // 1〜4: 指定窓のみ音声ON, 0: 全窓ミュート, 99: 全窓同時ON
             volume: 80,              // 0〜100
-            iosKeepAlive: true,      // iPhone/iPadで片方が止まった時に自動再開するエンジン
+            iosKeepAlive: true,      // iPhone/iPadで他窓操作時に止まった窓のみ自動再開
             uiLock: true,            // YouTubeのUIを出さない透明シールドON
-            autoLiveSync: true,      // ライブ配信の遅延を自動検知して最新位置へ戻す
-            liveThreshold: 5,        // 何秒以上遅れたら自動追従するか
-            liveCatchupMode: 'seek', // 'seek' | 'speed'
-            showPanelHeaders: true,  // 各パネル上部のバーを表示するか
+            liveSyncMode: 'rate',    // 'rate' (1.25x倍速追従・画面更新なし[推奨]) | 'seek' (大幅遅延時のみシーク) | 'off' (手動のみ)
+            liveThreshold: 20,       // 実遅延が何秒以上になったら追従開始するか (デフォルト20秒)
+            liveCooldown: 60,        // シーク追従モード時の最小間隔 (デフォルト60秒)
+            showPanelHeaders: true,  // 各映像パネル上部のバーを表示するか
             panelGap: 6,             // パネル間の隙間 (px)
             headerCollapsed: false,  // 上部UI非表示（没入モード）
             urlBarCollapsed: false,  // URL入力欄の折りたたみ状態
@@ -823,31 +860,51 @@
         // YouTube IFrame API プレイヤー管理 (1〜4窓)
         const players = { 1: null, 2: null, 3: null, 4: null };
         const playerReady = { 1: false, 2: false, 3: false, 4: false };
-        // ユーザーが手動で一時停止ボタンを押したかどうか（iOS自動復帰エンジンとの区別用）
         const userPaused = { 1: false, 2: false, 3: false, 4: false };
+        const tempUnlocked = { 1: false, 2: false, 3: false, 4: false };
+        const loadedChatVideoId = { 1: null, 2: null, 3: null, 4: null };
+
+        // ライブ配信の自然バッファベースライン計測 & クールダウン管理 (過剰シーク・頻繁な更新を根絶するための状態)
+        const liveMetrics = {
+            1: { minGap: Infinity, lastSeekAt: 0, isSpeeding: false, lastRawGap: 0, actualDrift: 0 },
+            2: { minGap: Infinity, lastSeekAt: 0, isSpeeding: false, lastRawGap: 0, actualDrift: 0 },
+            3: { minGap: Infinity, lastSeekAt: 0, isSpeeding: false, lastRawGap: 0, actualDrift: 0 },
+            4: { minGap: Infinity, lastSeekAt: 0, isSpeeding: false, lastRawGap: 0, actualDrift: 0 }
+        };
+
+        // iOS KeepAlive の過剰呼び出し防止タイムスタンプ
+        const lastAutoResumeAt = { 1: 0, 2: 0, 3: 0, 4: 0 };
+        let iosBannerDismissed = false;
 
         let ytApiReady = false;
         let liveSyncIntervalId = null;
         let iosKeepAliveIntervalId = null;
 
+        function resetLiveMetrics(num) {
+            liveMetrics[num] = {
+                minGap: Infinity,
+                lastSeekAt: Date.now(), // 読み込み直後の即シークを防ぐため現在時刻をセット
+                isSpeeding: false,
+                lastRawGap: 0,
+                actualDrift: 0
+            };
+        }
+
         // ==========================================
-        // DOM テンプレート生成 (Stream 1 〜 4 のユニットとドロワー設定)
+        // ゼロ・リロード DOM 構築 (初回に一度だけ #videoPanel1..4 と #chatPanel1..4 を生成)
         // ==========================================
-        function buildStreamUnitsDOM() {
-            const layoutRoot = document.getElementById('layoutRoot');
-            layoutRoot.innerHTML = '';
+        function buildZeroReloadStageDOM() {
+            const stage = document.getElementById('workspaceStage');
 
             for (let num = 1; num <= 4; num++) {
                 const t = STREAM_THEMES[num];
 
-                // ストリームユニット (section#unit1〜4)
-                const section = document.createElement('section');
-                section.id = `unit${num}`;
-                section.className = 'flex flex-col min-w-0 min-h-0 bg-zinc-900 border border-zinc-800/90 overflow-hidden shadow-lg relative';
-                section.style.borderRadius = '10px';
-
-                section.innerHTML = `
-                    <!-- Stream ${num} パネルヘッダーバー -->
+                // 1. 映像パネル (#videoPanel1〜4)
+                const vPanel = document.createElement('section');
+                vPanel.id = `videoPanel${num}`;
+                vPanel.className = 'zero-reload-panel video-panel shadow-lg';
+                vPanel.innerHTML = `
+                    <!-- パネルヘッダーバー -->
                     <div id="panelHeader${num}" class="panel-header-bar h-8 bg-zinc-900/95 border-b border-zinc-800 px-2 flex items-center justify-between text-xs shrink-0 z-20">
                         <div class="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
                             <div class="relative shrink-0">
@@ -859,7 +916,7 @@
                                 <span class="text-zinc-600 hidden sm:inline">|</span>
                                 <span id="streamTitle${num}" class="text-zinc-400 truncate text-[11px] hidden sm:inline">配信未設定</span>
                             </div>
-                            <span id="liveBadge${num}" class="hidden px-1.5 py-0.2 rounded ${t.bgSoft} ${t.text} border ${t.border} text-[9px] font-mono shrink-0">LIVE</span>
+                            <span id="liveBadge${num}" class="hidden px-1.5 py-0.5 rounded ${t.bgSoft} ${t.text} border ${t.border} text-[9px] font-mono shrink-0">● LIVE</span>
                         </div>
 
                         <div class="flex items-center gap-1 shrink-0">
@@ -870,13 +927,16 @@
                             <button onclick="togglePlayPause(${num})" title="再生 / 一時停止" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
                                 <i id="playPauseIcon${num}" class="fa-solid fa-pause text-[11px]"></i>
                             </button>
-                            <button onclick="seekToLiveSingle(${num}, true)" title="最新のライブ位置へ追いつく" class="p-1 text-amber-400 hover:text-amber-300 rounded hover:bg-zinc-800 transition">
+                            <button onclick="seekToLiveSingle(${num}, true)" title="最新のライブ位置へ手動で追いつく" class="p-1 text-amber-400 hover:text-amber-300 rounded hover:bg-zinc-800 transition">
                                 <i class="fa-solid fa-bolt text-[11px]"></i>
+                            </button>
+                            <button onclick="toggleTempUnlockSingle(${num})" id="tempUnlockBtn${num}" title="この窓だけ一時的にYouTube標準ボタン（画質変更など）を操作可能にする" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                <i class="fa-solid fa-gear text-[11px]"></i>
                             </button>
                             <button onclick="cycleChatPositionQuick(${num})" title="チャット${num}の配置切替（下→右→透過重ね→非表示）" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
                                 <i class="fa-regular fa-comment-dots text-[11px]"></i>
                             </button>
-                            <button onclick="reloadStreamSingle(${num})" title="${num}窓を再読み込み" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                            <button onclick="reloadStreamSingle(${num})" title="${num}窓の映像を再読み込み" class="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
                                 <i class="fa-solid fa-rotate-right text-[11px]"></i>
                             </button>
                             <button onclick="openYoutubePage(${num})" title="YouTube本家で開く" class="p-1 text-zinc-400 hover:text-red-400 rounded hover:bg-zinc-800 transition">
@@ -885,90 +945,81 @@
                         </div>
                     </div>
 
-                    <!-- Stream ${num} 内部コンテナ -->
-                    <div id="unitContent${num}" class="flex-1 flex flex-col min-h-0 min-w-0 relative">
-                        <!-- 映像プレイヤー ${num} -->
-                        <div id="videoWrapper${num}" class="relative bg-black min-h-[80px] min-w-[100px] flex items-center justify-center overflow-hidden" style="flex: 58 1 0%;">
-                            <div id="videoPlaceholder${num}" class="flex flex-col items-center justify-center text-center p-4 max-w-xs z-10">
-                                <div class="w-10 h-10 rounded-2xl ${t.bgSoft} border ${t.border} flex items-center justify-center mb-2 ${t.text}">
-                                    <i class="fa-brands fa-youtube text-xl"></i>
-                                </div>
-                                <h2 class="text-xs sm:text-sm font-bold text-zinc-200 mb-1">${num}窓目の配信URLを入力</h2>
-                                <p class="text-[11px] text-zinc-500 mb-3">iPhone/iPadでも止まらずに複数同時再生できます</p>
-                                <div class="flex gap-1.5">
-                                    <button onclick="focusUrlInput(${num})" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition">
-                                        URL入力
-                                    </button>
-                                    <button onclick="loadDemoStreamSingle(${num})" class="px-2.5 py-1 rounded-lg ${t.bgSoft} ${t.text} border ${t.border} text-xs font-medium transition">
-                                        サンプル読込
-                                    </button>
-                                </div>
+                    <!-- 映像本体領域 -->
+                    <div class="relative flex-1 bg-black flex items-center justify-center overflow-hidden">
+                        <div id="videoPlaceholder${num}" class="flex flex-col items-center justify-center text-center p-4 max-w-xs z-10">
+                            <div class="w-10 h-10 rounded-2xl ${t.bgSoft} border ${t.border} flex items-center justify-center mb-2 ${t.text}">
+                                <i class="fa-brands fa-youtube text-xl"></i>
                             </div>
-
-                            <!-- YouTube IFrame API ターゲット ${num} -->
-                            <div id="videoFrameBox${num}" class="iframe-container video-iframe-target hidden">
-                                <div id="ytPlayer${num}"></div>
-                            </div>
-
-                            <!-- UIブロッカー（タッチ/ホバー防止＆タップで音声切替・再生復帰する透明シールド） -->
-                            <div id="uiShield${num}" onclick="handleShieldTap(${num})" class="ui-blocker-shield absolute inset-0 z-10 hidden cursor-pointer" title="タップでこの窓の音声に切り替え（停止中は自動再開）">
-                                <div id="shieldBadge${num}" class="absolute top-2 left-2 pointer-events-none flex items-center gap-1.5 bg-black/75 backdrop-blur-sm border border-white/15 px-2.5 py-1 rounded-full text-[10px] text-zinc-100 opacity-0 transition-opacity duration-200">
-                                    <img id="shieldAvatar${num}" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
-                                    <span class="ch-name-label-${num} font-semibold">${num}窓</span>
-                                    <span id="shieldAudioStatus${num}" class="text-emerald-400 font-bold">🔊 音声ON</span>
-                                </div>
+                            <h2 class="text-xs sm:text-sm font-bold text-zinc-200 mb-1">${num}窓目の配信URLを入力</h2>
+                            <p class="text-[11px] text-zinc-500 mb-3">iPhone/iPad対応・レイアウト変更時も再読込なし</p>
+                            <div class="flex gap-1.5">
+                                <button onclick="focusUrlInput(${num})" class="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium border border-zinc-700 transition">
+                                    URL入力
+                                </button>
+                                <button onclick="loadDemoStreamSingle(${num})" class="px-2.5 py-1 rounded-lg ${t.bgSoft} ${t.text} border ${t.border} text-xs font-medium transition">
+                                    サンプル読込
+                                </button>
                             </div>
                         </div>
 
-                        <!-- 映像${num} ⇔ チャット${num} 間のドラッグリサイズバー -->
-                        <div id="vcSplitter${num}" onpointerdown="startPointerResize(event, 'vc${num}')" class="splitter-v"></div>
+                        <!-- YouTube IFrame API ターゲット ${num} -->
+                        <div id="videoFrameBox${num}" class="iframe-container video-iframe-target hidden">
+                            <div id="ytPlayer${num}"></div>
+                        </div>
 
-                        <!-- チャットボックス ${num} -->
-                        <div id="chatWrapper${num}" class="flex flex-col bg-zinc-900 border-t border-zinc-800 min-h-[75px] min-w-[120px] z-20" style="flex: 42 1 0%;">
-                            <div class="h-7 bg-zinc-950/90 border-b border-zinc-800/80 px-2 flex items-center justify-between text-[11px] shrink-0">
-                                <div class="flex items-center gap-1.5 text-zinc-300 font-medium min-w-0">
-                                    <img id="chatAvatar${num}" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden shrink-0">
-                                    <i id="chatFallbackIcon${num}" class="fa-regular fa-comments ${t.text} shrink-0"></i>
-                                    <span class="ch-name-label-${num} truncate font-semibold text-zinc-200">${num}窓</span>
-                                    <span class="text-zinc-500 text-[10px] shrink-0">チャット</span>
-                                </div>
-                                <div class="flex items-center gap-1 shrink-0">
-                                    <button onclick="cycleChatPositionQuick(${num})" title="チャットの表示位置を切替" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition text-[10px]">
-                                        <i class="fa-solid fa-up-down-left-right"></i>
-                                    </button>
-                                    <button onclick="reloadChatEmbed(${num})" title="チャットを再読み込み" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
-                                        <i class="fa-solid fa-rotate-right text-[10px]"></i>
-                                    </button>
-                                    <button onclick="popoutChat(${num})" title="チャットを別ウィンドウで開く" class="px-1.5 py-0.5 bg-zinc-800 hover:bg-red-600 text-zinc-200 hover:text-white rounded flex items-center gap-1 transition text-[10px]">
-                                        <i class="fa-solid fa-up-right-from-square text-[9px]"></i>
-                                        <span>別窓</span>
-                                    </button>
-                                    <button onclick="setChatPosition(${num}, 'hidden')" title="チャットを隠す" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
-                                        <i class="fa-solid fa-xmark"></i>
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
-                                <div id="chatPlaceholder${num}" class="text-center p-3 text-xs text-zinc-500 space-y-1">
-                                    <i class="fa-regular fa-comment-dots text-base text-zinc-600 block"></i>
-                                    <p class="text-[11px]">配信を読み込むとチャットが表示されます</p>
-                                </div>
-                                <div id="chatFrameBox${num}" class="iframe-container hidden"></div>
+                        <!-- UIブロッカー（YouTubeの標準UI出現を防ぎ、タップで音声を切り替える透明シールド） -->
+                        <div id="uiShield${num}" onclick="handleShieldTap(${num})" class="ui-blocker-shield absolute inset-0 z-10 hidden cursor-pointer group" title="タップでこの窓の音声に切り替え">
+                            <!-- ホバー/タップ時に左上に浮かび上がるミニマルステータス＆クイック操作バー -->
+                            <div id="shieldBadge${num}" class="absolute top-2 left-2 flex items-center gap-1.5 bg-black/80 backdrop-blur-md border border-white/15 px-2.5 py-1 rounded-full text-[10px] text-zinc-100 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                <img id="shieldAvatar${num}" src="" alt="" class="w-3.5 h-3.5 rounded-full object-cover hidden">
+                                <span class="ch-name-label-${num} font-semibold max-w-[110px] truncate">${num}窓</span>
+                                <span id="shieldAudioStatus${num}" class="text-emerald-400 font-bold">🔊 音声ON</span>
+                                <button onclick="event.stopPropagation(); seekToLiveSingle(${num}, true);" class="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-300 font-bold transition" title="最新ライブ位置へ同期">⚡LIVE</button>
+                                <button onclick="event.stopPropagation(); togglePlayPause(${num});" class="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition" title="一時停止/再生">⏯</button>
                             </div>
                         </div>
                     </div>
                 `;
+                stage.appendChild(vPanel);
 
-                layoutRoot.appendChild(section);
-
-                // 1窓と2窓の間にメインスプリッターを挿入
-                if (num === 1) {
-                    const mainSplitter = document.createElement('div');
-                    mainSplitter.id = 'mainSplitter';
-                    mainSplitter.className = 'splitter-h';
-                    mainSplitter.setAttribute('onpointerdown', "startPointerResize(event, 'main')");
-                    layoutRoot.appendChild(mainSplitter);
-                }
+                // 2. チャットパネル (#chatPanel1〜4)
+                const cPanel = document.createElement('section');
+                cPanel.id = `chatPanel${num}`;
+                cPanel.className = 'zero-reload-panel chat-panel shadow-lg';
+                cPanel.innerHTML = `
+                    <div class="h-7 bg-zinc-950/95 border-b border-zinc-800/80 px-2 flex items-center justify-between text-[11px] shrink-0">
+                        <div class="flex items-center gap-1.5 text-zinc-300 font-medium min-w-0">
+                            <img id="chatAvatar${num}" src="" alt="" class="w-4 h-4 rounded-full object-cover hidden shrink-0">
+                            <i id="chatFallbackIcon${num}" class="fa-regular fa-comments ${t.text} shrink-0"></i>
+                            <span class="ch-name-label-${num} truncate font-semibold text-zinc-200">${num}窓</span>
+                            <span class="text-zinc-500 text-[10px] shrink-0">チャット</span>
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                            <button onclick="cycleChatPositionQuick(${num})" title="チャットの表示位置を切替" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition text-[10px]">
+                                <i class="fa-solid fa-up-down-left-right"></i>
+                            </button>
+                            <button onclick="reloadChatEmbed(${num})" title="チャットを再読み込み" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                <i class="fa-solid fa-rotate-right text-[10px]"></i>
+                            </button>
+                            <button onclick="popoutChat(${num})" title="チャットを別ウィンドウで開く" class="px-1.5 py-0.5 bg-zinc-800 hover:bg-red-600 text-zinc-200 hover:text-white rounded flex items-center gap-1 transition text-[10px]">
+                                <i class="fa-solid fa-up-right-from-square text-[9px]"></i>
+                                <span>別窓</span>
+                            </button>
+                            <button onclick="setChatPosition(${num}, 'hidden')" title="チャットを隠す" class="px-1.5 py-0.5 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="relative flex-1 bg-zinc-950 flex items-center justify-center overflow-hidden">
+                        <div id="chatPlaceholder${num}" class="text-center p-3 text-xs text-zinc-500 space-y-1">
+                            <i class="fa-regular fa-comment-dots text-base text-zinc-600 block"></i>
+                            <p class="text-[11px]">配信を読み込むとチャットが表示されます</p>
+                        </div>
+                        <div id="chatFrameBox${num}" class="iframe-container hidden"></div>
+                    </div>
+                `;
+                stage.appendChild(cPanel);
             }
 
             // ドロワー内の1〜4窓チャット配置設定リストを構築
@@ -1009,15 +1060,15 @@
         }
 
         // ==========================================
-        // 初期化 & localStorage からの復元
+        // 初期化 & localStorage からの復元 (安全マイグレーション付き)
         // ==========================================
         window.addEventListener('DOMContentLoaded', () => {
-            buildStreamUnitsDOM();
+            buildZeroReloadStageDOM();
 
             const detectedDomain = window.location.hostname || 'localhost';
             document.getElementById('detectedDomainText').textContent = detectedDomain;
 
-            // 1. localStorage から前回のレイアウト・設定を復元 (旧v2データからのマイグレーション対応)
+            // 1. localStorage から前回のレイアウト・URLを復元（旧v3/v2の過剰シーク設定はリセットして移行）
             loadStateFromStorage();
 
             // 2. URLクエリパラメータ指定があれば優先反映
@@ -1038,7 +1089,7 @@
                 }
             }
 
-            // 3. 全コントロールとレイアウトの同期
+            // 3. 全コントロールとゼロ・リロードレイアウトの同期
             syncAllControlsWithState();
 
             // 4. ストリーム復元
@@ -1052,11 +1103,16 @@
                 }
             }
 
-            // 5. iOS/iPad 自動復帰エンジン (KeepAlive) & ライブ自動追従監視ループ開始
+            // 5. iOS/iPad 自動復帰エンジン (過干渉しない安全設計) & ライブ遅延ベースライン監視ループ開始
             startIosKeepAliveEngine();
             startLiveSyncWatcher();
 
-            // 6. キーボードショートカット (Hキーで上部UI隠す、1〜4キーで音声切替)
+            // 6. ウィンドウリサイズ時に座標を再計算（DOM移動なし）
+            window.addEventListener('resize', () => {
+                applyFullLayoutEngine();
+            });
+
+            // 7. キーボードショートカット (Hキーで上部UI隠す、1〜4キーで音声切替)
             window.addEventListener('keydown', (e) => {
                 if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
                 if (e.key === 'h' || e.key === 'H') {
@@ -1069,7 +1125,7 @@
         });
 
         // ==========================================
-        // localStorage 保存 & 復元 (v2からの引き継ぎ対応)
+        // localStorage 保存 & 復元 (旧バージョンの5秒シーク設定を安全な倍速追従へ自動移行)
         // ==========================================
         function saveStateToStorage() {
             try {
@@ -1080,32 +1136,51 @@
         function loadStateFromStorage() {
             try {
                 let raw = localStorage.getItem(STORAGE_KEY);
-                if (!raw) {
-                    // 旧バージョン(v2)の保存データがあれば引き継ぐ
-                    const oldRaw = localStorage.getItem('dualtube_studio_pro_v2_state');
-                    if (oldRaw) {
-                        const old = JSON.parse(oldRaw);
+                if (raw) {
+                    const saved = JSON.parse(raw);
+                    state = {
+                        ...DEFAULT_STATE,
+                        ...saved,
+                        streams: {
+                            1: { ...createEmptyStreamObj(), ...(saved.streams?.[1] || {}) },
+                            2: { ...createEmptyStreamObj(), ...(saved.streams?.[2] || {}) },
+                            3: { ...createEmptyStreamObj(), ...(saved.streams?.[3] || {}) },
+                            4: { ...createEmptyStreamObj(), ...(saved.streams?.[4] || {}) }
+                        }
+                    };
+                } else {
+                    // 旧v3またはv2からストリームURLとレイアウト比率のみ引き継ぎ、ライブ追従は安全な 'rate' (20秒) に初期化
+                    const oldV3 = localStorage.getItem('dualtube_studio_pro_v3_state');
+                    const oldV2 = localStorage.getItem('dualtube_studio_pro_v2_state');
+                    if (oldV3) {
+                        const old = JSON.parse(oldV3);
                         state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-                        if (old.stream1) state.streams[1] = { ...state.streams[1], ...old.stream1 };
-                        if (old.stream2) state.streams[2] = { ...state.streams[2], ...old.stream2 };
+                        if ([2, 3, 4].includes(old.windowCount)) state.windowCount = old.windowCount;
+                        if (old.streams) {
+                            for (let i = 1; i <= 4; i++) {
+                                if (old.streams[i]) state.streams[i] = { ...createEmptyStreamObj(), ...old.streams[i] };
+                            }
+                        }
+                        if (old.layout) state.layout = old.layout;
+                        if (old.splitRatio) state.splitRatio = old.splitRatio;
+                        if (old.activeAudio !== undefined) state.activeAudio = old.activeAudio;
+                        if (old.volume !== undefined) state.volume = old.volume;
+                    } else if (oldV2) {
+                        const old = JSON.parse(oldV2);
+                        state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+                        if (old.stream1) state.streams[1] = { ...createEmptyStreamObj(), ...old.stream1 };
+                        if (old.stream2) state.streams[2] = { ...createEmptyStreamObj(), ...old.stream2 };
                         if (old.layout) state.layout = old.layout === 'pip-mode' ? 'grid-2x2' : old.layout;
                         if (old.splitRatio) state.splitRatio = old.splitRatio;
-                        return;
                     }
-                    return;
+                    saveStateToStorage();
                 }
-                const saved = JSON.parse(raw);
-                state = {
-                    ...DEFAULT_STATE,
-                    ...saved,
-                    streams: {
-                        1: { ...createEmptyStreamObj(1), ...(saved.streams?.[1] || {}) },
-                        2: { ...createEmptyStreamObj(2), ...(saved.streams?.[2] || {}) },
-                        3: { ...createEmptyStreamObj(3), ...(saved.streams?.[3] || {}) },
-                        4: { ...createEmptyStreamObj(4), ...(saved.streams?.[4] || {}) }
-                    }
-                };
+
+                // 安全バリデーション
                 if (![2, 3, 4].includes(state.windowCount)) state.windowCount = 2;
+                if (!['rate', 'seek', 'off'].includes(state.liveSyncMode)) state.liveSyncMode = 'rate';
+                state.liveThreshold = Math.max(10, Math.min(60, parseInt(state.liveThreshold, 10) || 20));
+                state.liveCooldown = Math.max(30, Math.min(180, parseInt(state.liveCooldown, 10) || 60));
                 if (!state.embedDomain) state.embedDomain = window.location.hostname || 'localhost';
             } catch (_) {
                 state = JSON.parse(JSON.stringify(DEFAULT_STATE));
@@ -1113,14 +1188,13 @@
         }
 
         // ==========================================
-        // 窓数切替 (2窓[デフォルト] / 3窓 / 4窓)
+        // 窓数切替 (2窓[デフォルト] / 3窓 / 4窓) - ゼロリロード対応
         // ==========================================
         function setWindowCount(count, notify = true) {
             if (![2, 3, 4].includes(count)) count = 2;
             const prevCount = state.windowCount;
             state.windowCount = count;
 
-            // もし現在選択中の音声窓が新しい窓数を超えていたら1窓に戻す
             if (state.activeAudio > count && state.activeAudio !== 99) {
                 state.activeAudio = 1;
             }
@@ -1128,18 +1202,23 @@
                 state.activeChatTab = 1;
             }
 
-            // 新しく増えた窓にURLが既に入っていれば有効化、減った窓はミュート＆一時停止して負荷軽減
             for (let num = 1; num <= 4; num++) {
                 if (num <= count) {
                     if (state.streams[num].videoId && !players[num]) {
                         activateStreamView(num, false);
-                    } else if (players[num] && playerReady[num]) {
+                    } else if (players[num] && playerReady[num] && !userPaused[num]) {
                         try {
-                            players[num].mute();
-                            players[num].playVideo();
+                            if (state.activeAudio !== num && state.activeAudio !== 99) {
+                                players[num].mute();
+                            }
+                            const st = players[num].getPlayerState();
+                            if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) {
+                                players[num].playVideo();
+                            }
                         } catch (_) {}
                     }
                 } else {
+                    // 非表示になった窓はミュート＆一時停止してCPU/通信負荷を抑える
                     if (players[num] && playerReady[num]) {
                         try {
                             players[num].mute();
@@ -1149,21 +1228,19 @@
                 }
             }
 
-            // 3窓・4窓に切り替えた際、スマホ/iPadで見やすいよう必要なら自動でグリッド系レイアウトを調整
             syncAllControlsWithState();
             applyExclusiveAudioToPlayers();
             saveStateToStorage();
             updateUrlParams();
 
             if (notify && prevCount !== count) {
-                showToast(`${count}窓モードに切り替えました`, 'info');
+                showToast(`${count}窓モードに切り替えました（再生中の窓は維持されます）`, 'info');
             }
         }
 
         function updateWindowCountControlsDOM() {
             const c = state.windowCount;
 
-            // ヘッダーとミニバーの2窓/3窓/4窓ボタンのハイライト
             [2, 3, 4].forEach(n => {
                 const btn = document.getElementById(`winCountBtn${n}`);
                 const miniBtn = document.getElementById(`miniWinBtn${n}`);
@@ -1179,7 +1256,6 @@
                 }
             });
 
-            // URL入力欄 (3窓・4窓の表示/非表示)
             const row3 = document.getElementById('urlInputRow3');
             const row4 = document.getElementById('urlInputRow4');
             if (row3) {
@@ -1191,7 +1267,6 @@
                 row4.classList.toggle('flex', c >= 4);
             }
 
-            // 音声スイッチャーボタン & チャットタブボタン & ドロワー設定行の表示/非表示
             [3, 4].forEach(n => {
                 const show = c >= n;
                 const aBtn = document.getElementById(`audioBtn${n}`);
@@ -1229,6 +1304,7 @@
                 chevron.className = 'fa-solid fa-chevron-up text-[10px] text-zinc-400';
             }
             saveStateToStorage();
+            setTimeout(() => applyFullLayoutEngine(), 50);
         }
 
         function focusUrlInput(num) {
@@ -1239,20 +1315,13 @@
         }
 
         // ==========================================
-        // iPhone / iPad (iOS / iPadOS) 止まらない同時再生エンジン (KeepAlive)
+        // iPhone / iPad 自動復帰エンジン (過干渉・再読込を起こさないクールダウン付き設計)
         // ==========================================
-        /*
-         * iOS/iPadOS Safari で2窓以上を再生すると片方が止まる原因と対策:
-         * 1. 非ミュートの動画が2つ重なるとWebKitが即座に片方を一時停止(PAUSED)にする。
-         *    → 必ず「全窓を初期ミュート(mute=1)で起動」し、音声を切り替える時は「先に他の全窓をmute()してから、対象窓だけunMute()」する。
-         * 2. 新しいプレイヤーの再生開始時やバッファ復帰時にOSが他方のプレイヤーを一時停止させることがある。
-         *    → 500ms周期の監視＋onStateChangeイベントで、ユーザーが手動停止していないのにPAUSED(2)になった窓を即座に検知し、
-         *      非音声窓であればmute()を保証した上でplayVideo()を自動実行して復帰させる。
-         */
         function startIosKeepAliveEngine() {
             if (iosKeepAliveIntervalId) clearInterval(iosKeepAliveIntervalId);
             iosKeepAliveIntervalId = setInterval(() => {
-                let anyUnstartedOrBlocked = false;
+                let anyUnstarted = false;
+                const now = Date.now();
 
                 for (let num = 1; num <= state.windowCount; num++) {
                     const s = state.streams[num];
@@ -1261,46 +1330,54 @@
 
                     try {
                         const st = p.getPlayerState();
-                        // 音声担当以外の窓は常に確実にミュートを維持（iOSで他窓を止めさせない最重要ガード）
-                        const shouldBeUnmuted = (state.activeAudio === num || state.activeAudio === 99);
-                        if (!shouldBeUnmuted && typeof p.isMuted === 'function' && !p.isMuted()) {
-                            p.mute();
+
+                        // 再生中(1)またはバッファ中(3)のプレイヤーには一切 playVideo() を呼ばない（ちらつき防止）
+                        if (st === YT.PlayerState.PLAYING || st === YT.PlayerState.BUFFERING) {
+                            continue;
                         }
 
-                        // ユーザーが停止ボタンを押していないのに一時停止(2)または頭出し待機(5)になっている場合
-                        if ((st === YT.PlayerState.PAUSED || st === YT.PlayerState.CUED) && !userPaused[num]) {
-                            if (state.iosKeepAlive) {
+                        // ユーザーが停止ボタンを押していないのに PAUSED(2) になった場合のみ、6秒以上のクールダウンを空けて再開
+                        if (st === YT.PlayerState.PAUSED && !userPaused[num]) {
+                            if (state.iosKeepAlive && (now - lastAutoResumeAt[num] > 6000)) {
+                                lastAutoResumeAt[num] = now;
+                                const shouldBeUnmuted = (state.activeAudio === num || state.activeAudio === 99);
                                 if (!shouldBeUnmuted) p.mute();
                                 p.playVideo();
-                            } else {
-                                anyUnstartedOrBlocked = true;
                             }
-                        } else if (st === -1 && !userPaused[num]) {
-                            // 未開始(-1): iPhone/iPadで初回タップ待ち状態
-                            anyUnstartedOrBlocked = true;
+                        } else if ((st === -1 || st === YT.PlayerState.CUED) && !userPaused[num]) {
+                            anyUnstarted = true;
                         }
                     } catch (_) {}
                 }
 
-                // iPhone/iPadでユーザータップ待ちの窓がある場合はワンタップ一括再生バナーを表示
                 const banner = document.getElementById('iosUnlockBanner');
                 if (banner) {
-                    if (anyUnstartedOrBlocked) {
+                    if (anyUnstarted && !iosBannerDismissed) {
                         banner.classList.remove('hidden');
                         banner.classList.add('flex');
-                    } else {
+                    } else if (!anyUnstarted) {
                         banner.classList.add('hidden');
                         banner.classList.remove('flex');
                     }
                 }
-            }, 550);
+            }, 2000);
         }
 
-        // ワンタップで全アクティブ窓を一括再生＆排他ミュート同期（iOSユーザージェスチャー内で全プレイヤーをアンロック）
+        function dismissIosBanner() {
+            iosBannerDismissed = true;
+            const banner = document.getElementById('iosUnlockBanner');
+            if (banner) {
+                banner.classList.add('hidden');
+                banner.classList.remove('flex');
+            }
+        }
+
         function forcePlayAllStreams(notify = true) {
-            // 1. まず全プレイヤーのuserPausedフラグを解除し、同期的に全窓をmute()してからplayVideo()を呼ぶ（iOSの同時再生制限を突破）
+            iosBannerDismissed = true;
+            const now = Date.now();
             for (let num = 1; num <= state.windowCount; num++) {
                 userPaused[num] = false;
+                lastAutoResumeAt[num] = now;
                 const p = players[num];
                 if (p && playerReady[num]) {
                     try {
@@ -1310,7 +1387,6 @@
                 }
             }
 
-            // 2. 少し遅らせて、選択されている1つの音声チャンネルだけをunMuteする
             setTimeout(() => {
                 applyExclusiveAudioToPlayers();
             }, 250);
@@ -1322,7 +1398,7 @@
             }
 
             if (notify) {
-                showToast('▶️ 全窓を一括再生＆iOS同時再生ロックを解除しました', 'success');
+                showToast('▶️ 全窓を一括再生＆音声同期しました', 'success');
             }
         }
 
@@ -1332,8 +1408,8 @@
             saveStateToStorage();
             showToast(
                 state.iosKeepAlive
-                    ? '🍎 iPhone/iPad 自動復帰エンジンを【ON】にしました'
-                    : 'iPhone/iPad 自動復帰エンジンを【OFF】にしました',
+                    ? '🍎 iPhone/iPad 自動復帰モードを【ON】にしました'
+                    : 'iPhone/iPad 自動復帰モードを【OFF】にしました',
                 'info'
             );
         }
@@ -1490,7 +1566,7 @@
         }
 
         // ==========================================
-        // ストリームの読み込み・YT.Player 生成 (iOSインライン＆先行ミュート対応)
+        // ストリームの読み込み・YT.Player 生成
         // ==========================================
         function loadStream(num, notify = true) {
             const inputEl = document.getElementById(`urlInput${num}`);
@@ -1512,6 +1588,7 @@
             target.url = rawUrl;
             target.videoId = videoId;
             userPaused[num] = false;
+            resetLiveMetrics(num);
 
             if (isChanged) {
                 target.channelName = '';
@@ -1529,6 +1606,7 @@
             const videoId = target.videoId;
             if (!videoId) return;
 
+            resetLiveMetrics(num);
             document.getElementById(`videoPlaceholder${num}`).classList.add('hidden');
             document.getElementById(`videoFrameBox${num}`).classList.remove('hidden');
             updateUiLockDOM();
@@ -1539,7 +1617,10 @@
                 createOrLoadYTPlayer(num, videoId);
             }
 
-            renderChatEmbed(num);
+            // 同じvideoIdのチャットが既に読み込まれている場合は再読込しない
+            if (loadedChatVideoId[num] !== videoId) {
+                renderChatEmbed(num);
+            }
 
             if (notify) {
                 showToast(`${num}窓に配信 (ID: ${videoId}) を読み込みました`, 'success');
@@ -1547,7 +1628,8 @@
         }
 
         function createOrLoadYTPlayer(num, videoId) {
-            // 新しい動画をロードする際も、iOSで他の窓が止まらないよう一旦ミュート状態でロードする
+            resetLiveMetrics(num);
+
             if (players[num] && playerReady[num] && typeof players[num].loadVideoById === 'function') {
                 try {
                     players[num].mute();
@@ -1570,7 +1652,7 @@
                     mute: 1,                     // iOS/iPadOSで他窓を停止させないため初期起動は必ずミュート
                     playsinline: 1,              // iPhoneで勝手にフルスクリーン化して他窓が止まるのを防止
                     controls: state.uiLock ? 0 : 1,
-                    fs: 0,                       // フルスクリーンボタン無効化
+                    fs: 0,
                     rel: 0,
                     modestbranding: 1,
                     iv_load_policy: 3,
@@ -1580,12 +1662,11 @@
                 events: {
                     onReady: (event) => {
                         playerReady[num] = true;
-                        // 初期状態は必ずミュートで再生開始し、他窓の再生を妨げない
+                        resetLiveMetrics(num);
                         try {
                             event.target.mute();
                             event.target.playVideo();
                         } catch (_) {}
-                        // 再生開始後に排他オーディオ設定を適用
                         setTimeout(() => applyExclusiveAudioToPlayers(), 300);
                         tryExtractPlayerVideoData(num, event.target);
                     },
@@ -1594,15 +1675,16 @@
 
                         if (event.data === YT.PlayerState.PLAYING) {
                             tryExtractPlayerVideoData(num, event.target);
-                            // 再生開始した窓が音声担当でない場合は即座にミュートを徹底（iOSで他窓が止まるのを防ぐ）
                             if (state.activeAudio !== num && state.activeAudio !== 99) {
-                                try { event.target.mute(); } catch (_) {}
-                            } else {
-                                applyExclusiveAudioToPlayers();
+                                try {
+                                    if (!event.target.isMuted()) event.target.mute();
+                                } catch (_) {}
                             }
                         } else if (event.data === YT.PlayerState.PAUSED) {
-                            // iOS/iPadOSが他の窓の干渉で勝手にこの窓をPAUSEDにした場合、ユーザーの操作でなければ即自動再開
-                            if (state.iosKeepAlive && !userPaused[num] && num <= state.windowCount) {
+                            // iOS/iPadOSが他の窓の操作時に勝手にこの窓をPAUSEDにした場合、6秒クールダウン付きで自動再開
+                            const now = Date.now();
+                            if (state.iosKeepAlive && !userPaused[num] && num <= state.windowCount && (now - lastAutoResumeAt[num] > 6000)) {
+                                lastAutoResumeAt[num] = now;
                                 setTimeout(() => {
                                     try {
                                         if (state.activeAudio !== num && state.activeAudio !== 99) {
@@ -1610,7 +1692,7 @@
                                         }
                                         event.target.playVideo();
                                     } catch (_) {}
-                                }, 150);
+                                }, 250);
                             }
                         }
                     }
@@ -1646,8 +1728,10 @@
 
         function clearStream(num) {
             document.getElementById(`urlInput${num}`).value = '';
-            state.streams[num] = createEmptyStreamObj(num);
+            state.streams[num] = createEmptyStreamObj();
             userPaused[num] = false;
+            loadedChatVideoId[num] = null;
+            resetLiveMetrics(num);
 
             if (players[num] && typeof players[num].destroy === 'function') {
                 try { players[num].destroy(); } catch (_) {}
@@ -1677,19 +1761,21 @@
                 return;
             }
             userPaused[num] = false;
+            resetLiveMetrics(num);
             if (players[num] && typeof players[num].destroy === 'function') {
                 try { players[num].destroy(); } catch (_) {}
             }
             players[num] = null;
             playerReady[num] = false;
             activateStreamView(num, false);
-            showToast(`${target.channelName || num + '窓'} を再読み込みしました`, 'info');
+            showToast(`${target.channelName || num + '窓'} の映像を再読み込みしました`, 'info');
         }
 
         function renderChatEmbed(num) {
             const target = state.streams[num];
             if (!target.videoId) return;
 
+            loadedChatVideoId[num] = target.videoId;
             const chatBox = document.getElementById(`chatFrameBox${num}`);
             const chatPlaceholder = document.getElementById(`chatPlaceholder${num}`);
             const domain = encodeURIComponent(state.embedDomain || window.location.hostname || 'localhost');
@@ -1709,6 +1795,7 @@
         function reloadChatEmbed(num) {
             const target = state.streams[num];
             if (!target.videoId) return;
+            loadedChatVideoId[num] = null;
             renderChatEmbed(num);
             showToast(`${target.channelName || num + '窓'} のチャットを再読み込みしました`, 'info');
         }
@@ -1717,7 +1804,6 @@
         // 先行ミュート方式・排他オーディオスイッチャー (1〜4窓対応)
         // ==========================================
         function setActiveAudio(mode, notify = true) {
-            // mode: 1〜4 (指定窓のみ), 0 (全ミュート), 99 (全窓同時再生)
             state.activeAudio = mode;
             applyExclusiveAudioToPlayers();
             updateAudioButtonsDOM();
@@ -1726,7 +1812,7 @@
             if (notify) {
                 if (mode >= 1 && mode <= 4) {
                     const chName = state.streams[mode].channelName || `${mode}窓`;
-                    showToast(`🔊 「${chName}」の音声に切り替えました（他窓は自動ミュート）`, 'info');
+                    showToast(`🔊 「${chName}」の音声に切り替えました`, 'info');
                 } else if (mode === 0) {
                     showToast('🔇 すべての窓をミュートにしました', 'info');
                 } else if (mode === 99) {
@@ -1735,41 +1821,30 @@
             }
         }
 
-        // 【重要】iOSで他方の動画が止まらないよう、必ず「先に非対象窓をすべてmute()」してから対象窓をunMute()する
+        // 先に非対象窓をすべて mute() してから対象窓を unMute() する（iOSで他窓を止めさせない順序制御）
         function applyExclusiveAudioToPlayers() {
             const vol = state.volume;
             const mode = state.activeAudio;
 
-            // Step 1: まず音声を出さない窓をすべて先行ミュート
+            // Step 1: 音声を出さない窓を先行ミュート
             for (let num = 1; num <= 4; num++) {
                 const isTarget = (mode === num || mode === 99) && num <= state.windowCount;
                 if (!isTarget && players[num] && playerReady[num]) {
                     try {
-                        players[num].mute();
-                        // iOSがミュート切替時に一時停止させていた場合は再開
-                        if (state.iosKeepAlive && !userPaused[num] && num <= state.windowCount) {
-                            const st = players[num].getPlayerState();
-                            if (st === YT.PlayerState.PAUSED || st === YT.PlayerState.CUED) {
-                                players[num].playVideo();
-                            }
+                        if (typeof players[num].isMuted !== 'function' || !players[num].isMuted()) {
+                            players[num].mute();
                         }
                     } catch (_) {}
                 }
             }
 
-            // Step 2: その後、音声を出す窓だけをアンミュート＆音量設定
+            // Step 2: 音声を出す窓のみアンミュート＆音量反映
             for (let num = 1; num <= state.windowCount; num++) {
                 const isTarget = (mode === num || mode === 99);
                 if (isTarget && players[num] && playerReady[num]) {
                     try {
                         players[num].unMute();
                         players[num].setVolume(vol);
-                        if (!userPaused[num]) {
-                            const st = players[num].getPlayerState();
-                            if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.BUFFERING) {
-                                players[num].playVideo();
-                            }
-                        }
                     } catch (_) {}
                 }
             }
@@ -1838,7 +1913,6 @@
             }
         }
 
-        // 個別の再生 / 一時停止ボタン（ユーザーが意図して止めたことを記録）
         function togglePlayPause(num) {
             const p = players[num];
             if (!p || !playerReady[num]) return;
@@ -1872,6 +1946,7 @@
         // ==========================================
         function toggleUiLock() {
             state.uiLock = !state.uiLock;
+            for (let i = 1; i <= 4; i++) tempUnlocked[i] = false;
             updateUiLockDOM();
             saveStateToStorage();
 
@@ -1879,6 +1954,25 @@
                 showToast('🛡️ YouTube UI非表示ロックを【ON】にしました', 'success');
             } else {
                 showToast('🔓 YouTube UI非表示ロックを【OFF】にしました（画質変更などが行えます）', 'info');
+            }
+        }
+
+        function toggleTempUnlockSingle(num) {
+            tempUnlocked[num] = !tempUnlocked[num];
+            const vPanel = document.getElementById(`videoPanel${num}`);
+            const shield = document.getElementById(`uiShield${num}`);
+            const btn = document.getElementById(`tempUnlockBtn${num}`);
+
+            if (tempUnlocked[num]) {
+                vPanel.classList.add('temp-unlocked');
+                shield.classList.add('hidden');
+                btn.className = 'p-1 text-amber-400 bg-amber-500/20 rounded transition';
+                showToast(`${num}窓のYouTube標準UI操作を一時許可しました（画質変更後に歯車で戻せます）`, 'info');
+            } else {
+                vPanel.classList.remove('temp-unlocked');
+                if (state.uiLock && state.streams[num].videoId) shield.classList.remove('hidden');
+                btn.className = 'p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800 transition';
+                showToast(`${num}窓のUI非表示シールドを再ロックしました`, 'success');
             }
         }
 
@@ -1904,7 +1998,7 @@
                 const target = state.streams[num];
                 const shield = document.getElementById(`uiShield${num}`);
                 if (!shield) continue;
-                if (state.uiLock && target.videoId) {
+                if (state.uiLock && target.videoId && !tempUnlocked[num]) {
                     shield.classList.remove('hidden');
                 } else {
                     shield.classList.add('hidden');
@@ -1912,12 +2006,11 @@
             }
         }
 
-        // 動画シールドをタップした時：YouTubeのUIを出さずにその窓へ音声を切り替え＋もし停止している窓があれば全窓を再生復帰
         function handleShieldTap(num) {
             userPaused[num] = false;
             setActiveAudio(num, true);
 
-            // iPhone/iPad対策: タップイベントのコンテキスト内で停止中の他窓もミュート再生復帰させる
+            // タップ時に停止中の他窓があればミュートで再開
             for (let i = 1; i <= state.windowCount; i++) {
                 const p = players[i];
                 if (p && playerReady[i] && !userPaused[i]) {
@@ -1931,7 +2024,6 @@
                 }
             }
 
-            // タブチャットモード時はタップした窓のチャットタブにも連動切替
             if (state.layout === 'chat-tabbed') {
                 selectActiveChatTab(num, false);
             }
@@ -1939,26 +2031,37 @@
             const badge = document.getElementById(`shieldBadge${num}`);
             if (badge) {
                 badge.classList.remove('opacity-0');
-                setTimeout(() => badge.classList.add('opacity-0'), 1600);
+                setTimeout(() => badge.classList.add('opacity-0'), 1500);
             }
         }
 
         // ==========================================
-        // ライブ配信の遅延自動検知 ＆ 自動で最新ライブ位置に戻る機能
+        // 新・ライブ遅延ベースライン補正 ＆ 頻繁な更新を起こさない自動追従エンジン
         // ==========================================
+        /*
+         * 【頻繁な更新（シーク）を防止する仕組み】
+         * 1. YouTubeのライブストリームでは、最新位置で再生していても HLS/DASH バッファの仕様上
+         *    `rawGap = getDuration() - getCurrentTime()` が常に 10〜18秒程度になります。
+         * 2. 各ストリームの通常再生中に観測された最小ギャップ `minGap` を「ライブ最先端の基準値」として自動学習し、
+         *    そこからさらに遅れた分 `actualDrift = Math.max(0, rawGap - minGap)` を本当の実遅延として算出します。
+         * 3. 追従モードが `rate` (推奨) の場合、実遅延がしきい値（標準20秒）を超えると `seekTo` を呼ばず
+         *    `setPlaybackRate(1.25)` で画面の暗転や再読み込みなしに滑らかに追いつかせ、実遅延が 2.5秒以下に戻ったら `1.0x` に戻します。
+         * 4. 追従モードが `seek` の場合でも、`lastSeekAt` から `liveCooldown`（標準60秒）以上経過している時のみ
+         *    `duration - minGap` へシークするため、数秒おきに再読み込みされる現象が100%発生しません。
+         */
         function startLiveSyncWatcher() {
             if (liveSyncIntervalId) clearInterval(liveSyncIntervalId);
             liveSyncIntervalId = setInterval(() => {
-                if (!state.autoLiveSync) return;
                 for (let num = 1; num <= state.windowCount; num++) {
                     checkAndCatchUpLive(num);
                 }
-            }, 3500);
+            }, 4000);
         }
 
         function checkAndCatchUpLive(num) {
             const p = players[num];
             const badge = document.getElementById(`liveBadge${num}`);
+            const m = liveMetrics[num];
             if (!p || !playerReady[num] || userPaused[num]) return;
 
             try {
@@ -1967,47 +2070,126 @@
 
                 const duration = p.getDuration();
                 const current = p.getCurrentTime();
+                if (duration <= 0 || current <= 0) return;
 
-                if (duration > 0 && current > 0) {
-                    const lag = duration - current;
-                    if (badge) badge.classList.remove('hidden');
+                const rawGap = Math.max(0, duration - current);
+                m.lastRawGap = rawGap;
 
-                    if (lag > state.liveThreshold && lag < 86400) {
-                        if (state.liveCatchupMode === 'speed' && lag < state.liveThreshold * 3 && typeof p.setPlaybackRate === 'function') {
-                            p.setPlaybackRate(1.5);
-                            if (badge) {
-                                badge.textContent = `⚡1.5x (-${Math.round(lag)}s)`;
-                            }
-                        } else {
-                            p.seekTo(duration, true);
-                            if (typeof p.setPlaybackRate === 'function') p.setPlaybackRate(1.0);
-                            if (badge) {
-                                badge.textContent = 'LIVE 同期済';
-                            }
+                // 通常の動画アーカイブ（ライブではない長尺動画で端から大きく離れている場合）は除外
+                if (rawGap > 43200) return;
+
+                if (badge) badge.classList.remove('hidden');
+
+                // 自然なライブバッファ位置（minGap）を自動キャリブレーション
+                // まだ未計測、またはよりライブ端に近い位置が観測されたら更新（極端な0秒ノイズを防ぐため最低2秒を下限）
+                if (!isFinite(m.minGap)) {
+                    m.minGap = Math.max(2, rawGap);
+                } else if (rawGap < m.minGap) {
+                    m.minGap = Math.max(2, rawGap);
+                } else {
+                    // 長時間視聴時の微細なドリフトを吸収するため緩やかに馴染ませる
+                    m.minGap = m.minGap * 0.995 + Math.max(2, rawGap) * 0.005;
+                }
+
+                // 自然バッファを差し引いた「本当の実遅延秒数」
+                const actualDrift = Math.max(0, rawGap - m.minGap);
+                m.actualDrift = actualDrift;
+
+                // モード 1: OFF（手動のみ）
+                if (state.liveSyncMode === 'off') {
+                    if (m.isSpeeding && typeof p.setPlaybackRate === 'function') {
+                        p.setPlaybackRate(1.0);
+                        m.isSpeeding = false;
+                    }
+                    if (badge) {
+                        badge.textContent = actualDrift > 5 ? `● LIVE (-${Math.round(actualDrift)}s)` : '● LIVE';
+                    }
+                    return;
+                }
+
+                // モード 2: 倍速追従（推奨・画面更新や暗転なし）
+                if (state.liveSyncMode === 'rate') {
+                    if (actualDrift > state.liveThreshold) {
+                        if (!m.isSpeeding && typeof p.setPlaybackRate === 'function') {
+                            p.setPlaybackRate(1.25);
+                            m.isSpeeding = true;
                         }
-                    } else {
-                        if (typeof p.getPlaybackRate === 'function' && p.getPlaybackRate() > 1.0) {
+                        if (badge) {
+                            badge.textContent = `⚡1.25x追従 (-${Math.round(actualDrift)}s)`;
+                        }
+                    } else if (actualDrift <= 2.5) {
+                        if (m.isSpeeding && typeof p.setPlaybackRate === 'function') {
                             p.setPlaybackRate(1.0);
+                            m.isSpeeding = false;
                         }
                         if (badge) {
                             badge.textContent = '● LIVE';
+                        }
+                    } else {
+                        if (badge) {
+                            badge.textContent = m.isSpeeding
+                                ? `⚡1.25x追従 (-${Math.round(actualDrift)}s)`
+                                : (actualDrift > 5 ? `● LIVE (-${Math.round(actualDrift)}s)` : '● LIVE');
+                        }
+                    }
+                    return;
+                }
+
+                // モード 3: シーク追従（大幅遅延時のみ＋厳格なクールダウン制限付き）
+                if (state.liveSyncMode === 'seek') {
+                    if (m.isSpeeding && typeof p.setPlaybackRate === 'function') {
+                        p.setPlaybackRate(1.0);
+                        m.isSpeeding = false;
+                    }
+                    const now = Date.now();
+                    const cooldownMs = (state.liveCooldown || 60) * 1000;
+
+                    if (actualDrift > state.liveThreshold && (now - m.lastSeekAt >= cooldownMs)) {
+                        m.lastSeekAt = now;
+                        // durationそのものではなく、安全に再生できる自然バッファ位置へシークして再バッファループを防止
+                        const safeTarget = Math.max(0, duration - Math.max(3, m.minGap));
+                        p.seekTo(safeTarget, true);
+                        if (badge) badge.textContent = '● LIVE 同期済';
+                    } else {
+                        if (badge) {
+                            badge.textContent = actualDrift > 5 ? `● LIVE (-${Math.round(actualDrift)}s)` : '● LIVE';
                         }
                     }
                 }
             } catch (_) {}
         }
 
-        function toggleAutoLiveSync() {
-            state.autoLiveSync = !state.autoLiveSync;
+        function setLiveSyncMode(mode, notify = true) {
+            if (!['rate', 'seek', 'off'].includes(mode)) mode = 'rate';
+            state.liveSyncMode = mode;
+
+            // モード変更時に倍速中なら一旦1.0倍に戻す
+            if (mode !== 'rate') {
+                for (let num = 1; num <= 4; num++) {
+                    if (liveMetrics[num].isSpeeding && players[num] && playerReady[num]) {
+                        try { players[num].setPlaybackRate(1.0); } catch (_) {}
+                        liveMetrics[num].isSpeeding = false;
+                    }
+                }
+            }
+
             updateAutoLiveSyncDOM();
             saveStateToStorage();
 
-            if (state.autoLiveSync) {
-                syncAllToLiveEdge(false);
-                showToast(`⚡ 自動ライブ追従を【ON】にしました（${state.liveThreshold}秒以上の遅延を自動解消）`, 'success');
-            } else {
-                showToast('自動ライブ追従を【OFF】にしました', 'info');
+            if (notify) {
+                const msgMap = {
+                    rate: `⚡ ライブ追従を「倍速追従（${state.liveThreshold}秒以上の遅延時に1.25倍速・画面更新なし）」に設定しました`,
+                    seek: `⏭️ ライブ追従を「シーク追従（${state.liveThreshold}秒以上の遅延時・最低${state.liveCooldown}秒間隔）」に設定しました`,
+                    off: '⏸️ 自動ライブ追従を【OFF（手動のみ）】にしました'
+                };
+                showToast(msgMap[mode], 'info');
             }
+        }
+
+        function cycleLiveSyncMode() {
+            const order = ['rate', 'seek', 'off'];
+            const next = order[(order.indexOf(state.liveSyncMode) + 1) % order.length];
+            setLiveSyncMode(next, true);
         }
 
         function updateAutoLiveSyncDOM() {
@@ -2015,14 +2197,65 @@
             const text = document.getElementById('autoLiveSyncStateText');
             const pulse = document.getElementById('liveSyncPulse');
 
-            if (state.autoLiveSync) {
-                btn.className = 'px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition bg-emerald-600/20 text-emerald-300 border border-emerald-500/30';
-                text.textContent = 'ON';
-                pulse.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping';
+            const mode = state.liveSyncMode;
+            if (mode === 'rate') {
+                btn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition bg-emerald-600/20 text-emerald-300 border border-emerald-500/30';
+                text.textContent = `倍速(${state.liveThreshold}s)`;
+                pulse.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400';
+            } else if (mode === 'seek') {
+                btn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition bg-amber-600/20 text-amber-300 border border-amber-500/30';
+                text.textContent = `シーク(${state.liveThreshold}s)`;
+                pulse.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
             } else {
-                btn.className = 'px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 transition bg-zinc-900 text-zinc-400';
-                text.textContent = 'OFF';
+                btn.className = 'px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition bg-zinc-900 text-zinc-400 border border-zinc-800';
+                text.textContent = 'OFF(手動)';
                 pulse.className = 'w-1.5 h-1.5 rounded-full bg-zinc-600';
+            }
+
+            // ドロワー内の3択ボタン更新
+            ['rate', 'seek', 'off'].forEach(m => {
+                const dBtn = document.getElementById(`drawerSyncMode-${m}`);
+                if (!dBtn) return;
+                if (m === mode) {
+                    dBtn.className = 'p-2 rounded-xl border border-emerald-500 bg-emerald-950/40 text-emerald-200 text-center transition flex flex-col items-center gap-0.5 shadow';
+                } else {
+                    dBtn.className = 'p-2 rounded-xl border border-zinc-800 bg-zinc-900/80 text-zinc-400 hover:text-zinc-200 text-center transition flex flex-col items-center gap-0.5';
+                }
+            });
+
+            const tSlider = document.getElementById('liveThresholdSlider');
+            const tLabel = document.getElementById('liveThresholdLabel');
+            if (tSlider) tSlider.value = state.liveThreshold;
+            if (tLabel) tLabel.textContent = `${state.liveThreshold}秒以上遅れたら追従`;
+
+            const cSlider = document.getElementById('liveCooldownSlider');
+            const cLabel = document.getElementById('liveCooldownLabel');
+            if (cSlider) cSlider.value = state.liveCooldown;
+            if (cLabel) cLabel.textContent = `最低 ${state.liveCooldown}秒 間隔`;
+        }
+
+        function updateLiveThreshold(val) {
+            state.liveThreshold = Math.max(10, Math.min(60, parseInt(val, 10) || 20));
+            updateAutoLiveSyncDOM();
+            saveStateToStorage();
+        }
+
+        function updateLiveCooldown(val) {
+            state.liveCooldown = Math.max(30, Math.min(180, parseInt(val, 10) || 60));
+            updateAutoLiveSyncDOM();
+            saveStateToStorage();
+        }
+
+        function recalibrateAllLiveBaselines(notify = true) {
+            for (let num = 1; num <= 4; num++) {
+                resetLiveMetrics(num);
+                const p = players[num];
+                if (p && playerReady[num]) {
+                    try { p.setPlaybackRate(1.0); } catch (_) {}
+                }
+            }
+            if (notify) {
+                showToast('現在の再生位置をライブ基準（遅延0秒）として再設定しました', 'success');
             }
         }
 
@@ -2035,10 +2268,17 @@
             }
             try {
                 userPaused[num] = false;
+                liveMetrics[num].lastSeekAt = Date.now();
+                liveMetrics[num].isSpeeding = false;
+                if (typeof p.setPlaybackRate === 'function') p.setPlaybackRate(1.0);
+
                 const dur = p.getDuration();
                 if (dur > 0) {
-                    p.seekTo(dur, true);
+                    // ライブ端ギリギリ(dur)ではなく2秒手前にシークしてバッファ詰まりを防止
+                    p.seekTo(Math.max(0, dur - 2), true);
                     p.playVideo();
+                    // 少し後に新しい基準ギャップを再計測させる
+                    liveMetrics[num].minGap = Infinity;
                 }
                 if (notify) {
                     showToast(`⚡ ${target.channelName || num + '窓'} を最新のライブ位置へ同期しました`, 'success');
@@ -2055,18 +2295,8 @@
             }
         }
 
-        function updateLiveThreshold(val) {
-            state.liveThreshold = parseInt(val, 10) || 5;
-            saveStateToStorage();
-        }
-
-        function updateLiveCatchupMode(val) {
-            state.liveCatchupMode = val;
-            saveStateToStorage();
-        }
-
         // ==========================================
-        // 2窓・3窓・4窓対応 マルチレイアウトエンジン
+        // ゼロ・リロード マルチレイアウト座標計算エンジン (DOM移動を一切行わない)
         // ==========================================
         function setLayout(layoutName, notify = true) {
             state.layout = layoutName;
@@ -2074,7 +2304,7 @@
             saveStateToStorage();
             updateUrlParams();
             if (notify) {
-                showToast('レイアウトを変更しました', 'info');
+                showToast('レイアウトを変更しました（動画・チャットは再読込されません）', 'info');
             }
         }
 
@@ -2111,6 +2341,9 @@
         }
 
         function cycleChatPositionQuick(num) {
+            if (['chat-tabbed', 'video-top-chat-bottom', 'side-chat-dock'].includes(state.layout)) {
+                state.layout = state.windowCount >= 3 ? 'grid-2x2' : 'split-columns';
+            }
             const order = ['bottom', 'right', 'overlay', 'hidden'];
             const current = state.streams[num].chatPos;
             const next = order[(order.indexOf(current) + 1) % order.length];
@@ -2120,19 +2353,138 @@
             showToast(`${chName} のチャットを「${labels[next]}」に変更しました`, 'info');
         }
 
+        // パーセンテージ矩形 (x, y, w, h) をピクセル隙間 (gap) 付きで要素へ適用するヘルパー
+        function setPanelRect(el, rect, gap, radius, zIndex = 10, opacity = 1) {
+            if (!el) return;
+            if (!rect || rect.w <= 0 || rect.h <= 0) {
+                el.classList.add('panel-hidden');
+                return;
+            }
+            el.classList.remove('panel-hidden');
+            const halfGap = gap / 2;
+            el.style.left = `calc(${rect.x.toFixed(3)}% + ${halfGap}px)`;
+            el.style.top = `calc(${rect.y.toFixed(3)}% + ${halfGap}px)`;
+            el.style.width = `calc(${rect.w.toFixed(3)}% - ${gap}px)`;
+            el.style.height = `calc(${rect.h.toFixed(3)}% - ${gap}px)`;
+            el.style.borderRadius = `${radius}px`;
+            el.style.zIndex = String(zIndex);
+            el.style.opacity = String(opacity);
+        }
+
+        function setSplitterBounds(splitterEl, orientation, xPct, yPct, wPct, hPct) {
+            if (!splitterEl) return;
+            splitterEl.classList.remove('hidden', 'splitter-col', 'splitter-row');
+            splitterEl.classList.add(orientation === 'col' ? 'splitter-col' : 'splitter-row');
+            if (orientation === 'col') {
+                splitterEl.style.left = `calc(${xPct.toFixed(3)}% - 4px)`;
+                splitterEl.style.top = `${yPct.toFixed(3)}%`;
+                splitterEl.style.width = '8px';
+                splitterEl.style.height = `${hPct.toFixed(3)}%`;
+            } else {
+                splitterEl.style.left = `${xPct.toFixed(3)}%`;
+                splitterEl.style.top = `calc(${yPct.toFixed(3)}% - 4px)`;
+                splitterEl.style.width = `${wPct.toFixed(3)}%`;
+                splitterEl.style.height = '8px';
+            }
+        }
+
+        function hideAllSplitters() {
+            ['mainSplitter', 'vcSplitter1', 'vcSplitter2', 'vcSplitter3', 'vcSplitter4'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.classList.add('hidden');
+            });
+        }
+
+        // 各窓のユニット領域 (uRect) の中で映像とチャットをどう分割するか計算して適用
+        function layoutUnitInsideBox(num, uRect, chatPos, gap, radius) {
+            const vPanel = document.getElementById(`videoPanel${num}`);
+            const cPanel = document.getElementById(`chatPanel${num}`);
+            const vcSplit = document.getElementById(`vcSplitter${num}`);
+            const vcRatio = (state.streams[num].vcRatio || 58) / 100;
+
+            if (chatPos === 'hidden') {
+                setPanelRect(vPanel, uRect, gap, radius, 10, 1);
+                setPanelRect(cPanel, null, gap, radius);
+                if (vcSplit) vcSplit.classList.add('hidden');
+
+            } else if (chatPos === 'bottom') {
+                const vH = uRect.h * vcRatio;
+                const cH = uRect.h - vH;
+                setPanelRect(vPanel, { x: uRect.x, y: uRect.y, w: uRect.w, h: vH }, gap, radius, 10, 1);
+                setPanelRect(cPanel, { x: uRect.x, y: uRect.y + vH, w: uRect.w, h: cH }, gap, radius, 10, 1);
+                setSplitterBounds(vcSplit, 'row', uRect.x, uRect.y + vH, uRect.w, 0);
+
+            } else if (chatPos === 'right') {
+                const vW = uRect.w * vcRatio;
+                const cW = uRect.w - vW;
+                setPanelRect(vPanel, { x: uRect.x, y: uRect.y, w: vW, h: uRect.h }, gap, radius, 10, 1);
+                setPanelRect(cPanel, { x: uRect.x + vW, y: uRect.y, w: cW, h: uRect.h }, gap, radius, 10, 1);
+                setSplitterBounds(vcSplit, 'col', uRect.x + vW, uRect.y, 0, uRect.h);
+
+            } else if (chatPos === 'left') {
+                const vW = uRect.w * vcRatio;
+                const cW = uRect.w - vW;
+                setPanelRect(cPanel, { x: uRect.x, y: uRect.y, w: cW, h: uRect.h }, gap, radius, 10, 1);
+                setPanelRect(vPanel, { x: uRect.x + cW, y: uRect.y, w: vW, h: uRect.h }, gap, radius, 10, 1);
+                setSplitterBounds(vcSplit, 'col', uRect.x + cW, uRect.y, 0, uRect.h);
+
+            } else if (chatPos === 'overlay') {
+                setPanelRect(vPanel, uRect, gap, radius, 10, 1);
+                const overW = Math.min(uRect.w * 0.42, 38);
+                const overRect = {
+                    x: uRect.x + uRect.w - overW - 1,
+                    y: uRect.y + 4,
+                    w: overW,
+                    h: uRect.h - 6
+                };
+                setPanelRect(cPanel, overRect, gap, radius, 25, (state.overlayOpacity || 78) / 100);
+                if (vcSplit) vcSplit.classList.add('hidden');
+            }
+        }
+
+        // 指定された親領域 (areaRect) の中に N 個のパネルをグリッドまたは列で均等配置する矩形リストを返す
+        function computeSubGridRects(areaRect, count, preferRows = false) {
+            const rects = [];
+            if (count === 1) {
+                rects.push({ ...areaRect });
+            } else if (count === 2) {
+                if (preferRows) {
+                    const h = areaRect.h / 2;
+                    rects.push({ x: areaRect.x, y: areaRect.y, w: areaRect.w, h });
+                    rects.push({ x: areaRect.x, y: areaRect.y + h, w: areaRect.w, h });
+                } else {
+                    const w = areaRect.w / 2;
+                    rects.push({ x: areaRect.x, y: areaRect.y, w, h: areaRect.h });
+                    rects.push({ x: areaRect.x + w, y: areaRect.y, w, h: areaRect.h });
+                }
+            } else if (count === 3) {
+                const w = areaRect.w / 2;
+                const h = areaRect.h / 2;
+                rects.push({ x: areaRect.x, y: areaRect.y, w, h });
+                rects.push({ x: areaRect.x + w, y: areaRect.y, w, h });
+                rects.push({ x: areaRect.x, y: areaRect.y + h, w: areaRect.w, h });
+            } else {
+                const w = areaRect.w / 2;
+                const h = areaRect.h / 2;
+                rects.push({ x: areaRect.x, y: areaRect.y, w, h });
+                rects.push({ x: areaRect.x + w, y: areaRect.y, w, h });
+                rects.push({ x: areaRect.x, y: areaRect.y + h, w, h });
+                rects.push({ x: areaRect.x + w, y: areaRect.y + h, w, h });
+            }
+            return rects;
+        }
+
         function applyFullLayoutEngine() {
             const layout = state.layout;
             const winCount = state.windowCount;
-            const layoutRoot = document.getElementById('layoutRoot');
-            const customDock = document.getElementById('customDockContainer');
-            const dockPrimary = document.getElementById('dockPrimaryArea');
-            const dockSecondary = document.getElementById('dockSecondaryArea');
-            const dockSplitter = document.getElementById('dockMainSplitter');
-            const chatTabsBar = document.getElementById('chatTabsHeaderBar');
-            const dockChatContent = document.getElementById('dockChatContent');
-            const mainSplitter = document.getElementById('mainSplitter');
+            const gap = state.panelGap;
+            const radius = gap > 0 ? 10 : 0;
+            const isPortraitMobile = window.innerWidth < 768;
 
-            // 1. ボタンのアクティブ表示更新
+            const workspace = document.getElementById('workspace');
+            workspace.style.padding = `${Math.max(2, Math.floor(gap / 2))}px`;
+
+            // 1. UIボタンのアクティブ状態更新
             document.querySelectorAll('.layout-btn').forEach(btn => {
                 btn.className = 'layout-btn px-2 py-1 rounded-lg text-[11px] font-medium flex items-center gap-1 transition text-zinc-400 hover:text-white';
             });
@@ -2151,7 +2503,6 @@
                 activeDrawerBtn.classList.add('border-red-500', 'bg-red-950/20');
             }
 
-            // チャット配置ボタンのハイライト更新
             for (let num = 1; num <= 4; num++) {
                 const pos = state.streams[num].chatPos;
                 ['bottom', 'right', 'left', 'overlay', 'hidden'].forEach(p => {
@@ -2161,14 +2512,12 @@
                         ? 'py-1 rounded bg-red-600 text-white text-[10px] font-bold transition'
                         : 'py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[10px] font-medium transition';
                 });
-            }
 
-            // パネルヘッダー表示/非表示
-            const pHeaderBtn = document.getElementById('btnTogglePanelHeaders');
-            for (let num = 1; num <= 4; num++) {
                 const ph = document.getElementById(`panelHeader${num}`);
                 if (ph) ph.classList.toggle('hidden', !state.showPanelHeaders);
             }
+
+            const pHeaderBtn = document.getElementById('btnTogglePanelHeaders');
             if (pHeaderBtn) {
                 pHeaderBtn.textContent = state.showPanelHeaders ? 'ON' : 'OFF';
                 pHeaderBtn.className = state.showPanelHeaders
@@ -2176,201 +2525,124 @@
                     : 'px-3 py-1 rounded-lg bg-zinc-800 text-zinc-400 border border-zinc-700 font-semibold';
             }
 
-            // パネル間の隙間 (Gap)
-            const workspace = document.getElementById('workspace');
-            workspace.style.padding = `${state.panelGap}px`;
+            hideAllSplitters();
+            const chatTabsBar = document.getElementById('chatTabsHeaderBar');
+            const mainSplitter = document.getElementById('mainSplitter');
+            chatTabsBar.classList.add('panel-hidden');
 
-            // 2. まず全ての映像・チャット要素を各ユニット(unit1〜4)の元の親子構造へ安全に戻す（iframeのリロードを防ぐ）
-            for (let num = 1; num <= 4; num++) {
-                const unit = document.getElementById(`unit${num}`);
-                const unitContent = document.getElementById(`unitContent${num}`);
-                const videoWrapper = document.getElementById(`videoWrapper${num}`);
-                const vcSplitter = document.getElementById(`vcSplitter${num}`);
-                const chatWrapper = document.getElementById(`chatWrapper${num}`);
-
-                if (videoWrapper.parentElement !== unitContent) unitContent.appendChild(videoWrapper);
-                if (vcSplitter.parentElement !== unitContent) unitContent.appendChild(vcSplitter);
-                if (chatWrapper.parentElement !== unitContent) unitContent.appendChild(chatWrapper);
-
-                if (unit.parentElement !== layoutRoot) layoutRoot.appendChild(unit);
-                if (num === 1 && mainSplitter.parentElement !== layoutRoot) {
-                    layoutRoot.appendChild(mainSplitter);
-                }
-
-                // アクティブ窓数に応じた表示/非表示
-                const isActiveWin = num <= winCount;
-                unit.style.display = isActiveWin ? 'flex' : 'none';
-                unit.style.borderRadius = `${state.panelGap > 0 ? '10px' : '0px'}`;
-                unit.style.flex = '1 1 0%';
-
-                chatWrapper.style.cssText = '';
-                chatWrapper.className = 'flex flex-col bg-zinc-900 min-h-[75px] min-w-[120px] z-20';
+            // 非アクティブ窓 (winCount超) を隠す
+            for (let num = winCount + 1; num <= 4; num++) {
+                setPanelRect(document.getElementById(`videoPanel${num}`), null, gap, radius);
+                setPanelRect(document.getElementById(`chatPanel${num}`), null, gap, radius);
             }
 
-            // 3. レイアウトモード別の配置構成
+            // 2. レイアウトモード別の座標計算・適用
             if (layout === 'split-columns' || layout === 'videos-only') {
-                layoutRoot.classList.remove('hidden');
-                customDock.classList.add('hidden');
-
-                // 2窓の時はスプリッターで比率変更可能な2列、3〜4窓または映像のみ4窓の時は見やすいグリッド/カラム構成
                 if (winCount === 2) {
-                    layoutRoot.className = 'w-full h-full flex flex-col md:flex-row min-w-0 min-h-0 relative';
-                    layoutRoot.style.gap = '0px';
-                    mainSplitter.classList.remove('hidden');
-                    document.getElementById('unit1').style.flex = `${state.splitRatio} 1 0%`;
-                    document.getElementById('unit2').style.flex = `${100 - state.splitRatio} 1 0%`;
-                } else {
-                    mainSplitter.classList.add('hidden');
-                    if (layout === 'videos-only' && winCount >= 3) {
-                        layoutRoot.className = 'w-full h-full grid grid-cols-1 md:grid-cols-2 grid-rows-2 min-w-0 min-h-0 relative';
-                    } else {
-                        layoutRoot.className = `w-full h-full grid grid-cols-1 md:grid-cols-${winCount} min-w-0 min-h-0 relative`;
-                    }
-                    layoutRoot.style.gap = `${state.panelGap}px`;
-                }
+                    const r = state.splitRatio;
+                    const u1 = isPortraitMobile
+                        ? { x: 0, y: 0, w: 100, h: r }
+                        : { x: 0, y: 0, w: r, h: 100 };
+                    const u2 = isPortraitMobile
+                        ? { x: 0, y: r, w: 100, h: 100 - r }
+                        : { x: r, y: 0, w: 100 - r, h: 100 };
 
-                for (let num = 1; num <= winCount; num++) {
-                    configureIndividualUnitLayout(num, layout === 'videos-only' ? 'hidden' : state.streams[num].chatPos);
+                    layoutUnitInsideBox(1, u1, layout === 'videos-only' ? 'hidden' : state.streams[1].chatPos, gap, radius);
+                    layoutUnitInsideBox(2, u2, layout === 'videos-only' ? 'hidden' : state.streams[2].chatPos, gap, radius);
+
+                    if (isPortraitMobile) {
+                        setSplitterBounds(mainSplitter, 'row', 0, r, 100, 0);
+                    } else {
+                        setSplitterBounds(mainSplitter, 'col', r, 0, 0, 100);
+                    }
+                } else {
+                    // 3窓・4窓の並列カラム（映像のみモードまたはモバイル時は2×2グリッド）
+                    if (layout === 'videos-only' || isPortraitMobile) {
+                        const boxes = computeSubGridRects({ x: 0, y: 0, w: 100, h: 100 }, winCount, false);
+                        for (let num = 1; num <= winCount; num++) {
+                            layoutUnitInsideBox(num, boxes[num - 1], layout === 'videos-only' ? 'hidden' : state.streams[num].chatPos, gap, radius);
+                        }
+                    } else {
+                        const colW = 100 / winCount;
+                        for (let num = 1; num <= winCount; num++) {
+                            const box = { x: (num - 1) * colW, y: 0, w: colW, h: 100 };
+                            layoutUnitInsideBox(num, box, state.streams[num].chatPos, gap, radius);
+                        }
+                    }
                 }
 
             } else if (layout === 'grid-2x2') {
-                // 2×2 グリッド（2窓なら2列、3〜4窓なら2×2グリッド）
-                layoutRoot.classList.remove('hidden');
-                customDock.classList.add('hidden');
-                mainSplitter.classList.add('hidden');
-
-                if (winCount === 2) {
-                    layoutRoot.className = 'w-full h-full grid grid-cols-1 md:grid-cols-2 min-w-0 min-h-0 relative';
-                } else {
-                    layoutRoot.className = 'w-full h-full grid grid-cols-1 sm:grid-cols-2 grid-rows-2 min-w-0 min-h-0 relative';
-                }
-                layoutRoot.style.gap = `${state.panelGap}px`;
-
+                const boxes = computeSubGridRects({ x: 0, y: 0, w: 100, h: 100 }, winCount, isPortraitMobile);
                 for (let num = 1; num <= winCount; num++) {
-                    configureIndividualUnitLayout(num, state.streams[num].chatPos);
+                    layoutUnitInsideBox(num, boxes[num - 1], state.streams[num].chatPos, gap, radius);
                 }
 
             } else if (layout === 'video-top-chat-bottom' || layout === 'side-chat-dock' || layout === 'chat-tabbed') {
-                // ドック型レイアウト（プライマリ領域に全映像、セカンダリ領域に全チャットまたはタブチャット）
-                layoutRoot.classList.add('hidden');
-                customDock.classList.remove('hidden');
+                const r = state.splitRatio;
+                const isVertical = (layout === 'video-top-chat-bottom') || (layout === 'chat-tabbed' && isPortraitMobile);
 
-                const isVerticalSplit = (layout === 'video-top-chat-bottom');
-                customDock.className = isVerticalSplit
-                    ? 'w-full h-full flex flex-col min-w-0 min-h-0 relative'
-                    : 'w-full h-full flex flex-col lg:flex-row min-w-0 min-h-0 relative';
+                const primaryArea = isVertical
+                    ? { x: 0, y: 0, w: 100, h: r }
+                    : { x: 0, y: 0, w: r, h: 100 };
+                const secondaryArea = isVertical
+                    ? { x: 0, y: r, w: 100, h: 100 - r }
+                    : { x: r, y: 0, w: 100 - r, h: 100 };
 
-                dockSplitter.className = isVerticalSplit ? 'splitter-v' : 'splitter-h';
-
-                // プライマリ領域（映像グリッド）のクラス設定
-                if (winCount === 2) {
-                    dockPrimary.className = isVerticalSplit
-                        ? 'grid grid-cols-2 min-w-0 min-h-0 relative overflow-hidden'
-                        : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 lg:grid-rows-2 min-w-0 min-h-0 relative overflow-hidden';
+                if (isVertical) {
+                    setSplitterBounds(mainSplitter, 'row', 0, r, 100, 0);
                 } else {
-                    dockPrimary.className = 'grid grid-cols-2 grid-rows-2 min-w-0 min-h-0 relative overflow-hidden';
-                }
-                dockPrimary.style.gap = `${state.panelGap}px`;
-
-                // セカンダリ領域（チャット領域）の編成
-                if (layout === 'chat-tabbed') {
-                    chatTabsBar.classList.remove('hidden');
-                    chatTabsBar.classList.add('flex');
-                    dockChatContent.className = 'flex-1 flex min-w-0 min-h-0 relative overflow-hidden';
-                    dockChatContent.style.gap = '0px';
-                } else {
-                    chatTabsBar.classList.add('hidden');
-                    chatTabsBar.classList.remove('flex');
-                    dockChatContent.className = `flex-1 grid ${winCount >= 3 && !isVerticalSplit ? 'grid-cols-2 grid-rows-2' : `grid-cols-${winCount}`} min-w-0 min-h-0 relative overflow-hidden`;
-                    dockChatContent.style.gap = `${state.panelGap}px`;
+                    setSplitterBounds(mainSplitter, 'col', r, 0, 0, 100);
                 }
 
+                // プライマリ領域に全アクティブ映像を配置
+                const preferRowsForVideos = (!isVertical && winCount === 2);
+                const videoBoxes = computeSubGridRects(primaryArea, winCount, preferRowsForVideos);
                 for (let num = 1; num <= winCount; num++) {
-                    const unit = document.getElementById(`unit${num}`);
-                    const vcSplitter = document.getElementById(`vcSplitter${num}`);
-                    const videoWrapper = document.getElementById(`videoWrapper${num}`);
-                    const chatWrapper = document.getElementById(`chatWrapper${num}`);
+                    setPanelRect(document.getElementById(`videoPanel${num}`), videoBoxes[num - 1], gap, radius, 10, 1);
+                }
 
-                    vcSplitter.classList.add('hidden');
-                    videoWrapper.style.flex = '1 1 0%';
-                    dockPrimary.appendChild(unit);
+                // セカンダリ領域にチャットを配置
+                if (layout === 'chat-tabbed') {
+                    // タブバーを上部に表示し、選択中のチャットのみ表示（他はDOMに残したまま非表示）
+                    const tabBarH = 6.5; // %
+                    setPanelRect(chatTabsBar, { x: secondaryArea.x, y: secondaryArea.y, w: secondaryArea.w, h: tabBarH }, gap, radius, 30, 1);
+                    const chatBodyRect = {
+                        x: secondaryArea.x,
+                        y: secondaryArea.y + tabBarH,
+                        w: secondaryArea.w,
+                        h: Math.max(10, secondaryArea.h - tabBarH)
+                    };
 
-                    chatWrapper.className = 'flex-1 flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden min-w-0 min-h-0';
-                    if (layout === 'chat-tabbed') {
-                        chatWrapper.style.display = (num === state.activeChatTab) ? 'flex' : 'none';
-                    } else {
-                        chatWrapper.style.display = (state.streams[num].chatPos === 'hidden') ? 'none' : 'flex';
+                    for (let num = 1; num <= winCount; num++) {
+                        const cPanel = document.getElementById(`chatPanel${num}`);
+                        if (num === state.activeChatTab) {
+                            setPanelRect(cPanel, chatBodyRect, gap, radius, 20, 1);
+                        } else {
+                            setPanelRect(cPanel, null, gap, radius);
+                        }
                     }
-                    dockChatContent.appendChild(chatWrapper);
+
+                    // タブボタンのハイライト更新
+                    for (let num = 1; num <= 4; num++) {
+                        const tBtn = document.getElementById(`chatTabBtn${num}`);
+                        if (!tBtn) continue;
+                        const t = STREAM_THEMES[num];
+                        const show = num <= winCount;
+                        const isSelected = num === state.activeChatTab;
+                        tBtn.className = `${show ? 'flex' : 'hidden'} px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0 ${isSelected ? t.btnActive : 'bg-zinc-800 text-zinc-400 hover:text-white'}`;
+                    }
+                } else {
+                    // 全チャット並列表示
+                    const chatBoxes = computeSubGridRects(secondaryArea, winCount, false);
+                    for (let num = 1; num <= winCount; num++) {
+                        const cPanel = document.getElementById(`chatPanel${num}`);
+                        if (state.streams[num].chatPos === 'hidden') {
+                            setPanelRect(cPanel, null, gap, radius);
+                        } else {
+                            setPanelRect(cPanel, chatBoxes[num - 1], gap, radius, 15, 1);
+                        }
+                    }
                 }
-
-                // タブボタンのハイライト更新
-                for (let num = 1; num <= 4; num++) {
-                    const tBtn = document.getElementById(`chatTabBtn${num}`);
-                    if (!tBtn) continue;
-                    const t = STREAM_THEMES[num];
-                    const show = num <= winCount;
-                    const isSelected = num === state.activeChatTab;
-                    tBtn.className = `${show ? 'flex' : 'hidden'} px-2.5 py-1 rounded-lg text-xs font-bold items-center gap-1.5 transition shrink-0 ${isSelected ? t.btnActive : 'bg-zinc-800 text-zinc-400 hover:text-white'}`;
-                }
-
-                dockPrimary.style.flex = `${state.splitRatio} 1 0%`;
-                dockSecondary.style.flex = `${100 - state.splitRatio} 1 0%`;
-            }
-        }
-
-        // 各窓 (1〜4窓) 内部の映像とチャットの配置構成
-        function configureIndividualUnitLayout(num, chatPos) {
-            const unitContent = document.getElementById(`unitContent${num}`);
-            const videoWrapper = document.getElementById(`videoWrapper${num}`);
-            const chatWrapper = document.getElementById(`chatWrapper${num}`);
-            const vcSplitter = document.getElementById(`vcSplitter${num}`);
-            const vcRatio = state.streams[num].vcRatio || 58;
-
-            unitContent.appendChild(videoWrapper);
-            unitContent.appendChild(vcSplitter);
-            unitContent.appendChild(chatWrapper);
-
-            if (chatPos === 'hidden') {
-                unitContent.className = 'flex-1 flex flex-col min-h-0 min-w-0 relative';
-                videoWrapper.style.flex = '1 1 0%';
-                vcSplitter.classList.add('hidden');
-                chatWrapper.style.display = 'none';
-
-            } else if (chatPos === 'bottom') {
-                unitContent.className = 'flex-1 flex flex-col min-h-0 min-w-0 relative';
-                vcSplitter.className = 'splitter-v';
-                chatWrapper.className = 'flex flex-col bg-zinc-900 border-t border-zinc-800 min-h-[70px] z-20';
-                chatWrapper.style.display = 'flex';
-                videoWrapper.style.flex = `${vcRatio} 1 0%`;
-                chatWrapper.style.flex = `${100 - vcRatio} 1 0%`;
-
-            } else if (chatPos === 'right') {
-                unitContent.className = 'flex-1 flex flex-row min-h-0 min-w-0 relative';
-                vcSplitter.className = 'splitter-h';
-                chatWrapper.className = 'flex flex-col bg-zinc-900 border-l border-zinc-800 min-w-[140px] z-20';
-                chatWrapper.style.display = 'flex';
-                videoWrapper.style.flex = `${vcRatio} 1 0%`;
-                chatWrapper.style.flex = `${100 - vcRatio} 1 0%`;
-
-            } else if (chatPos === 'left') {
-                unitContent.className = 'flex-1 flex flex-row min-h-0 min-w-0 relative';
-                unitContent.appendChild(chatWrapper);
-                unitContent.appendChild(vcSplitter);
-                unitContent.appendChild(videoWrapper);
-                vcSplitter.className = 'splitter-h';
-                chatWrapper.className = 'flex flex-col bg-zinc-900 border-r border-zinc-800 min-w-[140px] z-20';
-                chatWrapper.style.display = 'flex';
-                chatWrapper.style.flex = `${100 - vcRatio} 1 0%`;
-                videoWrapper.style.flex = `${vcRatio} 1 0%`;
-
-            } else if (chatPos === 'overlay') {
-                unitContent.className = 'flex-1 flex flex-col min-h-0 min-w-0 relative';
-                videoWrapper.style.flex = '1 1 0%';
-                vcSplitter.classList.add('hidden');
-                chatWrapper.className = 'flex flex-col bg-zinc-950/80 backdrop-blur-sm border border-zinc-700/70 rounded-xl overflow-hidden absolute top-2 bottom-2 right-2 w-[38%] min-w-[180px] max-w-[320px] z-20 shadow-2xl';
-                chatWrapper.style.display = 'flex';
-                chatWrapper.style.opacity = (state.overlayOpacity / 100).toFixed(2);
             }
         }
 
@@ -2383,7 +2655,7 @@
         }
 
         function updateSplitRatio(val, save = true) {
-            const ratio = Math.min(85, Math.max(15, parseInt(val, 10) || 50));
+            const ratio = Math.min(80, Math.max(20, parseInt(val, 10) || 50));
             state.splitRatio = ratio;
 
             const slider = document.getElementById('drawerMainRatioSlider');
@@ -2391,36 +2663,24 @@
             if (slider) slider.value = ratio;
             if (label) label.textContent = `${ratio}% : ${100 - ratio}%`;
 
-            if ((state.layout === 'split-columns' || state.layout === 'videos-only') && state.windowCount === 2) {
-                document.getElementById('unit1').style.flex = `${ratio} 1 0%`;
-                document.getElementById('unit2').style.flex = `${100 - ratio} 1 0%`;
-            } else if (['video-top-chat-bottom', 'side-chat-dock', 'chat-tabbed'].includes(state.layout)) {
-                document.getElementById('dockPrimaryArea').style.flex = `${ratio} 1 0%`;
-                document.getElementById('dockSecondaryArea').style.flex = `${100 - ratio} 1 0%`;
-            }
-
+            applyFullLayoutEngine();
             if (save) saveStateToStorage();
         }
 
         function updateVideoChatRatio(num, val, save = true) {
-            const ratio = Math.min(85, Math.max(20, parseInt(val, 10) || 58));
+            const ratio = Math.min(85, Math.max(25, parseInt(val, 10) || 58));
             state.streams[num].vcRatio = ratio;
-
-            const pos = state.streams[num].chatPos;
-            if (pos === 'bottom' || pos === 'right' || pos === 'left') {
-                document.getElementById(`videoWrapper${num}`).style.flex = `${ratio} 1 0%`;
-                document.getElementById(`chatWrapper${num}`).style.flex = `${100 - ratio} 1 0%`;
-            }
-
+            applyFullLayoutEngine();
             if (save) saveStateToStorage();
         }
 
         function updateAllVideoChatRatios(val) {
-            const ratio = Math.min(85, Math.max(20, parseInt(val, 10) || 58));
+            const ratio = Math.min(85, Math.max(25, parseInt(val, 10) || 58));
             document.getElementById('drawerVcRatioLabelAll').textContent = `映像 ${ratio}% : チャット ${100 - ratio}%`;
             for (let num = 1; num <= 4; num++) {
-                updateVideoChatRatio(num, ratio, false);
+                state.streams[num].vcRatio = ratio;
             }
+            applyFullLayoutEngine();
             saveStateToStorage();
         }
 
@@ -2429,13 +2689,12 @@
             for (let num = 1; num <= 4; num++) state.streams[num].vcRatio = 58;
             document.getElementById('drawerVcRatioSliderAll').value = 58;
             document.getElementById('drawerVcRatioLabelAll').textContent = '映像 58% : チャット 42%';
-            applyFullLayoutEngine();
-            saveStateToStorage();
+            updateSplitRatio(50, true);
             showToast('画面比率を初期値にリセットしました', 'info');
         }
 
         // ==========================================
-        // Pointer Events による境界線ドラッグリサイズ (iPhone/iPad指操作＆マウス完全対応)
+        // Pointer Events による境界線ドラッグリサイズ
         // ==========================================
         let activePointerTarget = null;
 
@@ -2451,33 +2710,44 @@
 
         function onPointerMove(e) {
             if (!activePointerTarget) return;
-            const clientX = e.clientX;
-            const clientY = e.clientY;
-            const workspace = document.getElementById('workspace');
-            const rect = workspace.getBoundingClientRect();
+            const stage = document.getElementById('workspaceStage');
+            const rect = stage.getBoundingClientRect();
+            const isPortraitMobile = window.innerWidth < 768;
 
             if (activePointerTarget === 'main') {
-                if (state.layout === 'video-top-chat-bottom') {
-                    const pct = Math.round(((clientY - rect.top) / rect.height) * 100);
+                const isVertical = (state.layout === 'video-top-chat-bottom') ||
+                    (state.layout === 'chat-tabbed' && isPortraitMobile) ||
+                    ((state.layout === 'split-columns' || state.layout === 'videos-only') && isPortraitMobile);
+
+                if (isVertical) {
+                    const pct = Math.round(((e.clientY - rect.top) / rect.height) * 100);
                     updateSplitRatio(pct, false);
                 } else {
-                    const pct = Math.round(((clientX - rect.left) / rect.width) * 100);
+                    const pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
                     updateSplitRatio(pct, false);
                 }
             } else if (activePointerTarget.startsWith('vc')) {
                 const num = parseInt(activePointerTarget.replace('vc', ''), 10);
-                const unitContent = document.getElementById(`unitContent${num}`);
-                const uRect = unitContent.getBoundingClientRect();
-                const chatPos = state.streams[num].chatPos;
+                const vPanel = document.getElementById(`videoPanel${num}`);
+                const cPanel = document.getElementById(`chatPanel${num}`);
+                if (!vPanel || !cPanel) return;
 
+                const vRect = vPanel.getBoundingClientRect();
+                const cRect = cPanel.getBoundingClientRect();
+                const minX = Math.min(vRect.left, cRect.left);
+                const maxX = Math.max(vRect.right, cRect.right);
+                const minY = Math.min(vRect.top, cRect.top);
+                const maxY = Math.max(vRect.bottom, cRect.bottom);
+
+                const chatPos = state.streams[num].chatPos;
                 if (chatPos === 'bottom') {
-                    const pct = Math.round(((clientY - uRect.top) / uRect.height) * 100);
+                    const pct = Math.round(((e.clientY - minY) / Math.max(1, maxY - minY)) * 100);
                     updateVideoChatRatio(num, pct, false);
                 } else if (chatPos === 'right') {
-                    const pct = Math.round(((clientX - uRect.left) / uRect.width) * 100);
+                    const pct = Math.round(((e.clientX - minX) / Math.max(1, maxX - minX)) * 100);
                     updateVideoChatRatio(num, pct, false);
                 } else if (chatPos === 'left') {
-                    const pct = Math.round(100 - ((clientX - uRect.left) / uRect.width) * 100);
+                    const pct = Math.round(100 - ((e.clientX - minX) / Math.max(1, maxX - minX)) * 100);
                     updateVideoChatRatio(num, pct, false);
                 }
             }
@@ -2532,7 +2802,7 @@
                 if (p.windowCount) state.windowCount = p.windowCount;
                 state.layout = p.layout || 'split-columns';
                 state.splitRatio = p.splitRatio ?? 50;
-                state.overlayOpacity = p.overlayOpacity ?? 75;
+                state.overlayOpacity = p.overlayOpacity ?? 78;
                 state.showPanelHeaders = p.showPanelHeaders ?? true;
                 state.panelGap = p.panelGap ?? 6;
                 if (p.chatPositions) {
@@ -2556,7 +2826,7 @@
             state.streams = savedStreams;
             syncAllControlsWithState();
             saveStateToStorage();
-            showToast('設定を初期状態（2窓標準）にリセットしました', 'info');
+            showToast('設定を初期状態（2窓・倍速追従モード）にリセットしました', 'info');
         }
 
         // ==========================================
@@ -2577,6 +2847,7 @@
                 miniBar.classList.remove('flex');
             }
             saveStateToStorage();
+            setTimeout(() => applyFullLayoutEngine(), 30);
         }
 
         function togglePanelHeaders() {
@@ -2613,10 +2884,10 @@
             document.getElementById('masterVolumeLabel').textContent = `${state.volume}%`;
             document.getElementById('overlayOpacitySlider').value = state.overlayOpacity;
             document.getElementById('overlayOpacityLabel').textContent = `${state.overlayOpacity}%`;
-            document.getElementById('liveThresholdSelect').value = String(state.liveThreshold);
-            document.getElementById('liveCatchupModeSelect').value = state.liveCatchupMode;
             document.getElementById('panelGapSlider').value = state.panelGap;
             document.getElementById('panelGapLabel').textContent = `${state.panelGap}px`;
+            document.getElementById('drawerMainRatioSlider').value = state.splitRatio;
+            document.getElementById('drawerMainRatioLabel').textContent = `${state.splitRatio}% : ${100 - state.splitRatio}%`;
 
             const grid = document.getElementById('urlInputsGrid');
             const chevron = document.getElementById('urlBarChevron');
@@ -2698,6 +2969,7 @@
             if (!custom) return;
             state.embedDomain = custom;
             for (let num = 1; num <= 4; num++) {
+                loadedChatVideoId[num] = null;
                 if (state.streams[num].videoId) renderChatEmbed(num);
             }
             saveStateToStorage();
